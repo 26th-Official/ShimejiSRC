@@ -76,6 +76,11 @@ public final class ShopTest
         eq( "dot", null, MascotPackage.sanitizeName( ".hidden" ) );
 
         eq( "built-in catalog parses", true, ShopCatalog.parse( ShopDefaults.CATALOG ).entries().size() > 0 );
+        final List<ShopEntry> all = ShopCatalog.parse( ShopDefaults.CATALOG ).entries();
+        eq( "full Cachomon list", true, all.size() >= 300 );
+        boolean allLinkWithThumb = true;
+        for( final ShopEntry x : all ) allLinkWithThumb &= x.mode == ShopEntry.Mode.LINK && x.previewUrl.startsWith( "https://cachomon.com/thumbnails/" ) && x.pageUrl.startsWith( "https://cachomon.com/" );
+        eq( "all link-mode with thumbnails", true, allLinkWithThumb );
         final Path conf = java.nio.file.Paths.get( "conf", "shop_catalog.json" );
         if( Files.exists( conf ) )
             eq( "built-in catalog matches conf file", new String( Files.readAllBytes( conf ), "UTF-8" ), ShopDefaults.CATALOG );

@@ -10,7 +10,7 @@ import java.util.Set;
 /** The parsed shop catalog: a curated list of {@link ShopEntry}. Bad entries are skipped, not fatal. */
 public final class ShopCatalog
 {
-    private static final int MAX_ENTRIES = 500;
+    private static final int MAX_ENTRIES = 2000;
     private final List<ShopEntry> entries;
 
     private ShopCatalog( final List<ShopEntry> entries ) { this.entries = Collections.unmodifiableList( entries ); }

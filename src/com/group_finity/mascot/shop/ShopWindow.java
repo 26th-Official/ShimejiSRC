@@ -91,6 +91,26 @@ public final class ShopWindow extends JDialog
         imp.setToolTipText( "Install a mascot zip you downloaded from its creator's page" );
         top.add( refresh );
         top.add( imp );
+        final JButton more = new JButton( "More sources..." );
+        more.setToolTipText( "Search other places that host Shimeji (opens your browser)" );
+        more.addActionListener( e ->
+        {
+            final javax.swing.JPopupMenu m = new javax.swing.JPopupMenu();
+            final String[][] src = {
+                { "Cachomon - full Master List", "https://cachomon.com/grid.php?g=1&m=0&a=0&t=0" },
+                { "DeviantArt - shimeji", "https://www.deviantart.com/search?q=shimeji" },
+                { "itch.io - shimeji", "https://itch.io/search?q=shimeji" },
+                { "BOOTH - shimeji", "https://booth.pm/en/search/shimeji" },
+                { "Cachomon Patreon (supporter mascots)", "https://www.patreon.com/cachomon" } };
+            for( final String[] s : src )
+            {
+                final javax.swing.JMenuItem mi = new javax.swing.JMenuItem( s[ 0 ] );
+                mi.addActionListener( ev -> browse( s[ 1 ] ) );
+                m.add( mi );
+            }
+            m.show( more, 0, more.getHeight() );
+        } );
+        top.add( more );
 
         list.setLayout( new BoxLayout( list, BoxLayout.Y_AXIS ) );
         final JScrollPane scroll = new JScrollPane( list, JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER );
@@ -170,6 +190,7 @@ public final class ShopWindow extends JDialog
 
     private void rebuild()
     {
+        generation++;
         list.removeAll();
         if( catalog != null )
         {
@@ -186,6 +207,7 @@ public final class ShopWindow extends JDialog
         list.add( Box.createVerticalGlue() );
         list.revalidate();
         list.repaint();
+        javax.swing.SwingUtilities.invokeLater( () -> list.scrollRectToVisible( new java.awt.Rectangle( 0, 0, 1, 1 ) ) );
     }
 
     private static boolean installed( final ShopEntry e )
@@ -216,7 +238,9 @@ public final class ShopWindow extends JDialog
         title.setFont( title.getFont().deriveFont( Font.BOLD ) );
         final String by = ( e.creator.isEmpty() ? "" : "by " + e.creator ) + ( e.source.isEmpty() ? "" : "  -  " + e.source );
         final JLabel sub = new JLabel( by.isEmpty() ? " " : by );
-        final JTextArea desc = new JTextArea( e.description );
+        final JTextArea desc = new JTextArea( !e.description.isEmpty() ? e.description : e.mode == ShopEntry.Mode.LINK
+            ? ( e.isFree() ? "Free from the creator's page. Download the zip there, then use Import .zip." : "Available from the creator (" + e.price + "). Download the zip there, then use Import .zip." )
+            : "" );
         desc.setLineWrap( true );
         desc.setWrapStyleWord( true );
         desc.setEditable( false );
@@ -266,17 +290,54 @@ public final class ShopWindow extends JDialog
     }
 
     /** Sets the card thumbnail: the installed mascot's own first sprite, else the catalog's previewUrl (fetched off the EDT). */
+    /** Small pool so a few hundred thumbnails never open a few hundred connections at once. */
+    private final java.util.concurrent.ExecutorService previewPool = java.util.concurrent.Executors.newFixedThreadPool( 3, r ->
+    {
+        final Thread t = new Thread( r, "shop-preview" );
+        t.setDaemon( true );
+        return t;
+    } );
+    /** Bumped on every rebuild; queued thumbnail jobs from an older list are skipped. */
+    private volatile int generation = 0;
+
+    private static boolean thumbnailsEnabled()
+    {
+        try { return !"false".equalsIgnoreCase( Main.getInstance().getProperties().getProperty( "ShopThumbnails", "true" ).trim() ); }
+        catch( final Exception e ) { return true; }
+    }
+
+    /** Bytes of a remote thumbnail, from cache/shop-previews when we already fetched it once. */
+    private static byte[] cachedPreviewBytes( final String url ) throws Exception
+    {
+        final byte[] hash = java.security.MessageDigest.getInstance( "SHA-1" ).digest( url.getBytes( java.nio.charset.StandardCharsets.UTF_8 ) );
+        final StringBuilder name = new StringBuilder();
+        for( int i = 0; i < 10; i++ ) name.append( String.format( "%02x", hash[ i ] ) );
+        final Path file = Paths.get( "cache", "shop-previews", name + ".img" );
+        if( Files.isRegularFile( file ) && Files.size( file ) <= 1024 * 1024 ) return Files.readAllBytes( file );
+        final byte[] data = ShopDownloader.fetchBytes( url, 1024 * 1024 );
+        try
+        {
+            Files.createDirectories( file.getParent() );
+            Files.write( file, data );
+        }
+        catch( final java.io.IOException ignored ) { }
+        return data;
+    }
+
     private void loadPreview( final ShopEntry e, final JLabel pic )
     {
         final Path local = Paths.get( "img", e.id, "shime1.png" );
-        final String key = Files.isRegularFile( local ) ? local.toString() : e.previewUrl;
-        if( key == null || key.isEmpty() ) return;
+        final boolean isLocal = Files.isRegularFile( local );
+        if( !isLocal && ( !thumbnailsEnabled() || e.previewUrl == null || e.previewUrl.isEmpty() ) ) return;
+        final String key = isLocal ? local.toString() : e.previewUrl;
         if( previews.containsKey( key ) ) { pic.setIcon( previews.get( key ) ); return; }
-        new SwingWorker<javax.swing.ImageIcon, Void>()
+        final int gen = generation;
+        final SwingWorker<javax.swing.ImageIcon, Void> worker = new SwingWorker<javax.swing.ImageIcon, Void>()
         {
             @Override protected javax.swing.ImageIcon doInBackground() throws Exception
             {
-                final byte[] data = key.equals( local.toString() ) ? Files.readAllBytes( local ) : ShopDownloader.fetchBytes( key, 1024 * 1024 );
+                if( gen != generation ) return null;
+                final byte[] data = isLocal ? Files.readAllBytes( local ) : cachedPreviewBytes( key );
                 final java.awt.image.BufferedImage img = javax.imageio.ImageIO.read( new java.io.ByteArrayInputStream( data ) );
                 if( img == null ) return null;
                 final double k = Math.min( 1.0, Math.min( (double) PREVIEW_PX / img.getWidth(), (double) PREVIEW_PX / img.getHeight() ) );
@@ -286,10 +347,11 @@ public final class ShopWindow extends JDialog
             {
                 javax.swing.ImageIcon icon = null;
                 try { icon = get(); } catch( final Exception ignored ) { }
-                previews.put( key, icon );
+                if( icon != null ) previews.put( key, icon );
                 pic.setIcon( icon );
             }
-        }.execute();
+        };
+        previewPool.execute( worker );
     }
 
     // ── actions ──────────────────────────────────────────────────────────────
