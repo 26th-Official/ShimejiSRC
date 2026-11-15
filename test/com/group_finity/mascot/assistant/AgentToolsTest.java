@@ -159,6 +159,7 @@ public class AgentToolsTest
         // aliases
         final List<WindowControl.Info> br = List.of( w( "Inbox - Mozilla Firefox" ), w( "Discord" ) );
         eq( "browser alias", "Inbox - Mozilla Firefox", AgentTools.matchWindow( br, "browser" ).match.title );
+        eq( "librewolf is a browser", "Home - LibreWolf", AgentTools.matchWindow( List.of( w( "Home - LibreWolf" ), w( "Discord" ) ), "browser" ).match.title );
         eq( "two browsers ambiguous", null, AgentTools.matchWindow( List.of( w( "A - Google Chrome" ), w( "B - Mozilla Firefox" ) ), "browser" ).match );
 
         System.out.println( fails == 0 ? "AgentToolsTest: all passed" : "AgentToolsTest: " + fails + " FAILED" );

@@ -174,9 +174,11 @@ public final class AgentTools
     }
 
     /** Generic words people use for an app family. */
+    private static final String[] BROWSERS = { "chrome", "firefox", "librewolf", "edge", "brave", "opera", "vivaldi",
+        "zen browser", "floorp", "waterfox", "tor browser", "chromium", "duckduckgo", "arc" };
     private static final java.util.Map<String, String[]> ALIASES = java.util.Map.of(
-        "browser", new String[] { "chrome", "firefox", "edge", "brave", "opera", "vivaldi" },
-        "web browser", new String[] { "chrome", "firefox", "edge", "brave", "opera", "vivaldi" },
+        "browser", BROWSERS,
+        "web browser", BROWSERS,
         "terminal", new String[] { "terminal", "powershell", "command prompt", "cmd" },
         "explorer", new String[] { "file explorer" },
         "files", new String[] { "file explorer" },
