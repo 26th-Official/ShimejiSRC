@@ -142,6 +142,7 @@ public final class AssistantInput
                 public void onResponse( final String raw )
                 {
                     new AssistantActions( m ).fireActionFromResponse( raw );
+                    AgentTools.forHost( m ).handle( raw ); // direct replies to the user only
                     final String display = new AssistantPrompts( m ).applyPersonaRewrites( polishUtterance( stripActionTag( sanitizeResponse( raw ) ) ) );
                     com.group_finity.mascot.assistant.ChatLog.append( mascotName, display );
                     if( !isEphemeralQuery( userText ) )
@@ -264,6 +265,7 @@ public final class AssistantInput
                         public void onResponse( final String raw )
                         {
                             new AssistantActions( m ).fireActionFromResponse( raw );
+                    AgentTools.forHost( m ).handle( raw ); // direct replies to the user only
                             final String display = new AssistantPrompts( m ).applyPersonaRewrites( polishUtterance( stripActionTag( sanitizeResponse( raw ) ) ) );
                             com.group_finity.mascot.assistant.ChatLog.append( mascotName, display );
                             if( !isEphemeralQuery( userText ) )
@@ -337,6 +339,7 @@ public final class AssistantInput
                 @Override public void onResponse( final String raw )
                 {
                     new AssistantActions( m ).fireActionFromResponse( raw );
+                    AgentTools.forHost( m ).handle( raw ); // direct replies to the user only
                     final String text = new AssistantPrompts( m ).applyPersonaRewrites( polishUtterance( stripActionTag( sanitizeResponse( raw ) ) ) );
                     com.group_finity.mascot.assistant.ChatLog.append( mascotName, text );
                     // Append mascot reply to thread for next chained reply

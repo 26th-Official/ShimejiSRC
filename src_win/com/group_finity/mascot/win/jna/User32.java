@@ -61,6 +61,12 @@ public interface User32 extends StdCallLibrary{
 
 	int BringWindowToTop(Pointer hWnd);
 
+	boolean SetForegroundWindow(Pointer hWnd);
+
+	int GetWindowThreadProcessId(Pointer hWnd, int[] lpdwProcessId);
+
+	int WS_EX_TOOLWINDOW = 0x00000080;
+
 	Pointer GetDC(Pointer hWnd);
 	int ReleaseDC(Pointer hWnd, Pointer hDC);
 
