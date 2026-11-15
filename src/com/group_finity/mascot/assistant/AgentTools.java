@@ -105,16 +105,42 @@ public final class AgentTools
         th.start();
     }
 
+    /**
+     * Entry point for a direct user message: the user's own words win (deterministic and safe), else any
+     * tags the model emitted. If the user clearly asked for an action while the agent is off, say how to turn it on.
+     */
+    public void handleUser( final String userText, final String raw )
+    {
+        final List<String[]> intent = AgentIntent.parse( userText );
+        if( !enabled() )
+        {
+            if( !intent.isEmpty() )
+                reporter.say( AgentPolicy.isHalted() ? "My agent tools are paused." : "My agent tools are off. Set AgentEnabled=true in settings.properties and restart me." );
+            return;
+        }
+        final List<String[]> todo = !intent.isEmpty() ? intent : parse( raw );
+        if( todo.isEmpty() ) return;
+        log.info( "[Agent] running " + todo.size() + " action(s) from " + ( intent.isEmpty() ? "model tags" : "the user's words" ) );
+        final Thread th = new Thread( () -> runAll( todo ), "agent" );
+        th.setDaemon( true );
+        th.start();
+    }
+
+    private void runAll( final List<String[]> todo )
+    {
+        for( final String[] t : todo )
+        {
+            if( !enabled() ) return;
+            try { run( t ); }
+            catch( final Exception e ) { log.warning( "[Agent] " + t[ 0 ] + " failed: " + e ); reporter.say( "That didn't work: " + e.getMessage() ); }
+        }
+    }
+
     /** Same, on the calling thread (tests, and the worker thread above). Never call on the EDT: it may show a dialog. */
     void handleNow( final String raw )
     {
         if( !enabled() ) return;
-        for( final String[] t : parse( raw ) )
-        {
-            if( !enabled() ) return; // halted mid-way
-            try { run( t ); }
-            catch( final Exception e ) { log.warning( "[Agent] " + t[ 0 ] + " failed: " + e ); reporter.say( "That didn't work: " + e.getMessage() ); }
-        }
+        runAll( parse( raw ) );
     }
 
     void run( final String[] t ) throws Exception
@@ -147,6 +173,15 @@ public final class AgentTools
         }
     }
 
+    /** Generic words people use for an app family. */
+    private static final java.util.Map<String, String[]> ALIASES = java.util.Map.of(
+        "browser", new String[] { "chrome", "firefox", "edge", "brave", "opera", "vivaldi" },
+        "web browser", new String[] { "chrome", "firefox", "edge", "brave", "opera", "vivaldi" },
+        "terminal", new String[] { "terminal", "powershell", "command prompt", "cmd" },
+        "explorer", new String[] { "file explorer" },
+        "files", new String[] { "file explorer" },
+        "music", new String[] { "spotify", "youtube music", "apple music" } );
+
     /** Result of matching a spoken window name. Exactly one of {@code match} / {@code ambiguous} / neither (none). */
     public static final class Match
     {
@@ -158,6 +193,18 @@ public final class AgentTools
     /** Best window for a query: exact title > title starts with > title contains. Ties are ambiguous, never guessed. */
     public static Match matchWindow( final List<WindowControl.Info> all, final String query )
     {
+        final String[] alias = ALIASES.get( query.toLowerCase( Locale.ROOT ).trim() );
+        if( alias != null )
+        {
+            final List<WindowControl.Info> hits = new ArrayList<>();
+            for( final String a : alias )
+            {
+                final Match one = matchWindow( all, a );
+                if( one.match != null && !hits.contains( one.match ) ) hits.add( one.match );
+                else if( one.ambiguous != null ) for( final WindowControl.Info w : one.ambiguous ) if( !hits.contains( w ) ) hits.add( w );
+            }
+            return hits.size() == 1 ? new Match( hits.get( 0 ), null ) : new Match( null, hits );
+        }
         final String q = query.toLowerCase( Locale.ROOT ).trim();
         if( q.isEmpty() ) return new Match( null, new ArrayList<>() );
         int best = 0;
@@ -236,7 +283,8 @@ public final class AgentTools
     /** Rules + current window list to append to the system prompt when the agent is on ("" otherwise). */
     public String promptBlock()
     {
-        if( !enabled() ) return "";
+        if( !enabled() )
+            return "\n- You cannot move, minimize or snap windows and you cannot move or delete files. Never claim you did, and never offer to delete files. If asked, say your agent tools are off.";
         final StringBuilder sb = new StringBuilder();
         sb.append( "\n- You can act on the user's computer, ONLY when the user asks for it in THIS message. Append a silent tag after your spoken line (still reply in one short sentence): " )
           .append( "[DO:window|ACTION|window name] where ACTION is focus, minimize, maximize, restore, left, right, top, bottom or center (use words from the open-window list below); " )

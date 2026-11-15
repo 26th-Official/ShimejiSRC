@@ -128,11 +128,38 @@ public class AgentToolsTest
         AgentPolicy.halt();
         t.handleNow( "[DO:window|left|chrome]" );
         eq( "halted does nothing", 0, fw.applied.size() );
-        eq( "halted prompt empty", "", t.promptBlock() );
+        eq( "halted prompt denies abilities", true, t.promptBlock().contains( "cannot move" ) );
         AgentPolicy.resume();
         eq( "prompt lists windows", true, t.promptBlock().contains( "Google Chrome" ) );
         final Properties off = new Properties();
-        eq( "disabled prompt empty", "", new AgentTools( off, fw, ( x, y ) -> true, said::add, journal, home ).promptBlock() );
+        eq( "disabled prompt denies abilities", true, new AgentTools( off, fw, ( x, y ) -> true, said::add, journal, home ).promptBlock().contains( "cannot move" ) );
+        said.clear();
+        new AgentTools( off, fw, ( x, y ) -> true, said::add, journal, home ).handleUser( "minimize my browser", "[DO:window|minimize|chrome]" );
+        eq( "disabled tells user how to enable", true, said.size() == 1 && said.get( 0 ).contains( "AgentEnabled=true" ) );
+        said.clear();
+        new AgentTools( off, fw, ( x, y ) -> true, said::add, journal, home ).handleUser( "what is the weather", "" );
+        eq( "disabled + chit-chat is silent", 0, said.size() );
+
+        // intent from the user's own words
+        eq( "minimize browser", "window|minimize|browser", String.join( "|", AgentIntent.parse( "Can you minimize my browser?" ).get( 0 ) ) );
+        eq( "snap left", "window|left|notepad", String.join( "|", AgentIntent.parse( "snap notepad to the left" ).get( 0 ) ) );
+        eq( "put on right half", "window|right|discord", String.join( "|", AgentIntent.parse( "please put the discord window on the right half of the screen" ).get( 0 ) ) );
+        eq( "center", "window|center|chrome", String.join( "|", AgentIntent.parse( "center chrome" ).get( 0 ) ) );
+        eq( "switch to", "window|focus|spotify", String.join( "|", AgentIntent.parse( "switch to spotify" ).get( 0 ) ) );
+        eq( "clean up downloads", "organize|downloads", String.join( "|", AgentIntent.parse( "clean up my downloads" ).get( 0 ) ) );
+        eq( "tidy folder", "organize|downloads", String.join( "|", AgentIntent.parse( "tidy the downloads folder" ).get( 0 ) ) );
+        eq( "undo", "undo", String.join( "|", AgentIntent.parse( "undo that" ).get( 0 ) ) );
+        eq( "chit-chat is not a command", 0, AgentIntent.parse( "how are you today" ).size() );
+        eq( "question is not a command", 0, AgentIntent.parse( "what does minimize mean" ).size() );
+        eq( "sentence is not a command", 0, AgentIntent.parse( "I like to show my friends the cat" ).size() );
+
+        eq( "show me is chit-chat", 0, AgentIntent.parse( "show me the time" ).size() );
+        eq( "focus on is chit-chat", 0, AgentIntent.parse( "focus on my work" ).size() );
+
+        // aliases
+        final List<WindowControl.Info> br = List.of( w( "Inbox - Mozilla Firefox" ), w( "Discord" ) );
+        eq( "browser alias", "Inbox - Mozilla Firefox", AgentTools.matchWindow( br, "browser" ).match.title );
+        eq( "two browsers ambiguous", null, AgentTools.matchWindow( List.of( w( "A - Google Chrome" ), w( "B - Mozilla Firefox" ) ), "browser" ).match );
 
         System.out.println( fails == 0 ? "AgentToolsTest: all passed" : "AgentToolsTest: " + fails + " FAILED" );
         if( fails > 0 ) System.exit( 1 );
