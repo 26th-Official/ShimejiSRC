@@ -281,7 +281,9 @@ public final class AgentTools
         try { ms = Long.parseLong( secs ) * 1000L; } catch( final NumberFormatException ignored ) { }
         final WindowControl wc = windows;
         AgentCarry.start( wc, m.match, mascotBounds, () -> AgentCarry.screenOf( mascotBounds.get() ), this::enabled, ms,
-            reason -> reporter.say( "closed".equals( reason ) ? "The window's gone, so I'm done." : "off".equals( reason ) ? "Okay, I stopped." : "Here you go." ) );
+            reason -> reporter.say( "closed".equals( reason ) ? "The window's gone, so I'm done."
+                : "taken".equals( reason ) ? "Okay, it's yours."
+                : "off".equals( reason ) ? "Okay, I stopped." : "Here you go." ) );
         reporter.say( "Got it. Say \"drop it\" whenever." );
     }
 

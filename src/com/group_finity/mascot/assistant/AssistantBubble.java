@@ -1677,6 +1677,14 @@ public class AssistantBubble
         // In both cases setVisible(true) must be called before the shared mover can animate it.
         if( !everPositioned || !window.isVisible() )
         {
+            // Never show a Swing window from the manager thread: the EDT can be inside setBackground()/paint
+            // on the same window (screen-change timer, fade) holding the AWT tree lock while this thread holds
+            // the peer lock, and the two deadlock forever (StallWatchdog dump, Nov 2026: whole app froze).
+            if( !SwingUtilities.isEventDispatchThread() )
+            {
+                SwingUtilities.invokeLater( () -> positionWindow( mascotBounds, w, h ) );
+                return;
+            }
             everPositioned = true;
             curX = winX; curY = winY;
             smoothMascotCX = lastTailX;

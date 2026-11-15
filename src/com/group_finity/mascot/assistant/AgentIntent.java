@@ -26,7 +26,27 @@ public final class AgentIntent
     private static final Pattern UNDO = Pattern.compile( "^undo(?:\\s+(?:that|it|the\\s+(?:tidy|cleanup|clean up|sort|organi[sz]ing)))?$" );
 
     private static final Pattern CARRY = Pattern.compile(
-        "^(?:carry|take|haul|lug|pick up|pickup|hold|lift)\\s+(.+?)(?:\\s+(?:and\\s+carry\\s+(?:it\\s+)?)?(?:around|about|with you|for a walk|along))?(?:\\s+for\\s+(?:a while|a bit|a little|some time|(\\d+)\\s*(seconds?|secs?|minutes?|mins?)))?$" );
+        "^(?:carry|take|haul|lug|pick up|pickup|hold|lift)\\s+(.+?)(?:\\s+(?:and\\s+carry\\s+(?:it\\s+)?)?(?:around|about|with you|for a walk|along))?$" );
+    /** "for a minute", "for a while", "for 5 minutes", "for a couple of minutes"... */
+    private static final Pattern DURATION = Pattern.compile(
+        "\\s+for\\s+(?:(?:a|an|one)\\s+(minute|min|while|bit|little while|little|moment|second|sec)|(?:a\\s+)?(?:few|couple(?:\\s+of)?)\\s+minutes?|some\\s+time|(\\d+)\\s*(seconds?|secs?|minutes?|mins?))\\b" );
+
+    /** Seconds named by the duration phrase in {@code t}, or -1 when there is none. */
+    static long durationSeconds( final String t )
+    {
+        final Matcher d = DURATION.matcher( t );
+        if( !d.find() ) return -1;
+        if( d.group( 2 ) != null ) return Long.parseLong( d.group( 2 ) ) * ( d.group( 3 ).startsWith( "m" ) ? 60 : 1 );
+        final String w = d.group( 1 );
+        if( w == null ) return 180;                     // a few / a couple of minutes / some time
+        switch( w )
+        {
+            case "minute": case "min": return 60;
+            case "second": case "sec": return 10;
+            case "bit": case "little": case "moment": return 60;
+            default: return 180;                         // a while, a little while
+        }
+    }
     private static final Pattern DROP = Pattern.compile(
         "^(?:(?:ok(?:ay)?\\s+)?(?:drop|release|put down|set down|let go of|let go|stop carrying)(?:\\s+(?:it|that|them|the window|this window|my window|the app))?(?:\\s+down)?|put (?:it|that|the window|this window|my window) down|that'?s enough|you can put (?:it|that) down)$" );
 
@@ -40,17 +60,15 @@ public final class AgentIntent
              .replaceAll( "\\s+please$", "" ).replaceAll( "\\s+", " " ).trim();
         Matcher m;
         if( DROP.matcher( t ).matches() ) { out.add( new String[] { "drop" } ); return out; }
-        if( ( m = CARRY.matcher( t ) ).matches() && wantsCarry( t ) )
+        if( wantsCarry( t ) )
         {
-            long secs = 180;
-            if( m.group( 2 ) != null )
+            final long dur = durationSeconds( t );
+            final String bare = DURATION.matcher( t ).replaceAll( "" ).trim();
+            if( ( m = CARRY.matcher( bare ) ).matches() )
             {
-                secs = Long.parseLong( m.group( 2 ) ) * ( m.group( 3 ).startsWith( "m" ) ? 60 : 1 );
+                out.add( new String[] { "carry", clean( m.group( 1 ) ), Long.toString( Math.min( 600, dur < 0 ? 120 : dur ) ) } );
+                return out;
             }
-            else if( t.contains( "for a bit" ) || t.contains( "for a little" ) ) secs = 90;
-            else if( !t.contains( "for a while" ) && !t.contains( "some time" ) ) secs = 120;
-            out.add( new String[] { "carry", clean( m.group( 1 ) ), Long.toString( Math.min( 600, secs ) ) } );
-            return out;
         }
         if( ( m = UNDO.matcher( t ) ).matches() ) { out.add( new String[] { "undo" } ); return out; }
         if( ( m = ORGANIZE.matcher( t ) ).matches() ) { out.add( new String[] { "organize", m.group( 1 ).trim() } ); return out; }

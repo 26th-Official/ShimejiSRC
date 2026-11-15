@@ -19,9 +19,18 @@ public class AgentToolsTest
     {
         final List<Info> wins = new ArrayList<>();
         final List<String> applied = new ArrayList<>();
+        /** Current geometry per handle (all test windows share handle 1 unless set). */
+        Rectangle rect = new Rectangle( 100, 100, 400, 300 );
+        boolean gone = false, maximized = false, minimized = false;
         public List<Info> list() { return wins; }
-        public boolean apply( final Info w, final Op op ) { applied.add( op + ":" + w.title ); return true; }
-        public boolean carry( final Info w, final Rectangle m, final Rectangle s ) { applied.add( "CARRY:" + w.title ); return true; }
+        public boolean apply( final Info w, final Op op )
+        {
+            applied.add( op + ":" + w.title );
+            if( op == Op.RESTORE ) { maximized = false; minimized = false; }
+            return true;
+        }
+        public Info current( final long handle ) { return gone ? null : new Info( handle, "t", new Rectangle( rect ), minimized, maximized ); }
+        public boolean moveTo( final Info w, final int x, final int y ) { if( gone ) return false; rect.setLocation( x, y ); applied.add( "MOVE" ); return true; }
     }
 
     static WindowControl.Info w( final String t ) { return new WindowControl.Info( 1, t, new Rectangle( 0, 0, 100, 100 ), false ); }
@@ -159,6 +168,8 @@ public class AgentToolsTest
 
         // carry / drop intent
         eq( "carry this window", "carry||180", String.join( "|", AgentIntent.parse( "hey, carry this window around for a while" ).get( 0 ) ) );
+        eq( "for a minute", "carry|browser|60", String.join( "|", AgentIntent.parse( "carry my browser around for a minute" ).get( 0 ) ) );
+        eq( "for a couple minutes", "carry|chrome|180", String.join( "|", AgentIntent.parse( "carry chrome around for a couple of minutes" ).get( 0 ) ) );
         eq( "carry named", "carry|browser|120", String.join( "|", AgentIntent.parse( "carry my browser around" ).get( 0 ) ) );
         eq( "carry minutes", "carry|notepad|300", String.join( "|", AgentIntent.parse( "carry notepad around for 5 minutes" ).get( 0 ) ) );
         eq( "carry capped", "carry|chrome|600", String.join( "|", AgentIntent.parse( "carry chrome around for 90 minutes" ).get( 0 ) ) );
@@ -171,6 +182,40 @@ public class AgentToolsTest
 
         // carry geometry: centred above the mascot, clamped
         final Rectangle scr = new Rectangle( 0, 0, 1920, 1080 );
+        // Carrier: holds, lets a user drag take it, tolerates a resize
+        {
+            final FakeWin f = new FakeWin();
+            final AgentCarry.Carrier c = new AgentCarry.Carrier( f, 1 );
+            final Rectangle mas = new Rectangle( 1000, 700, 60, 80 ), sc = new Rectangle( 0, 0, 1920, 1080 );
+            eq( "first step holds", null, c.step( mas, sc ) );
+            eq( "window glued above mascot", new java.awt.Point( 830, 396 ), f.rect.getLocation() );
+            mas.x = 1200;
+            eq( "follows mascot", null, c.step( mas, sc ) );
+            eq( "moved with mascot", new java.awt.Point( 1030, 396 ), f.rect.getLocation() );
+            f.rect.setSize( 500, 350 );               // user resizes (even from the top/left edge)
+            f.rect.setLocation( f.rect.x - 40, f.rect.y - 10 );
+            eq( "resize keeps holding", null, c.step( mas, sc ) );
+            eq( "re-glued after resize", new java.awt.Point( 980, 346 ), f.rect.getLocation() );
+            f.rect.setLocation( f.rect.x + 200, f.rect.y + 80 ); // user drags it away
+            eq( "user drag lets go", "taken", c.step( mas, sc ) );
+            final FakeWin f2 = new FakeWin();
+            final AgentCarry.Carrier c2 = new AgentCarry.Carrier( f2, 1 );
+            c2.step( mas, sc );
+            f2.maximized = true;
+            eq( "user maximize lets go", "taken", c2.step( mas, sc ) );
+            final FakeWin f3 = new FakeWin();
+            f3.maximized = true;                       // starts maximized: restored first, then carried
+            final AgentCarry.Carrier c3 = new AgentCarry.Carrier( f3, 1 );
+            eq( "starts from maximized", null, c3.step( mas, sc ) );
+            eq( "was restored", true, f3.applied.contains( "RESTORE:t" ) );
+            f3.gone = true;
+            eq( "closed window ends", "closed", c3.step( mas, sc ) );
+            final FakeWin f4 = new FakeWin();
+            final AgentCarry.Carrier c4 = new AgentCarry.Carrier( f4, 1 );
+            c4.step( mas, sc );
+            f4.rect.setLocation( f4.rect.x + 5, f4.rect.y - 4 );
+            eq( "jitter under tolerance is not a drag", null, c4.step( mas, sc ) );
+        }
         eq( "carry above head", new Rectangle( 830, 396, 400, 300 ), AgentLayout.carryTarget( new Rectangle( 1000, 700, 60, 80 ), 400, 300, scr ) );
         eq( "carry clamps left/top", new Rectangle( 0, 0, 400, 300 ), AgentLayout.carryTarget( new Rectangle( 10, 100, 60, 80 ), 400, 300, scr ) );
         eq( "carry clamps right", new Rectangle( 1520, 396, 400, 300 ), AgentLayout.carryTarget( new Rectangle( 1900, 700, 60, 80 ), 400, 300, scr ) );
@@ -184,7 +229,7 @@ public class AgentToolsTest
             .withHost( () -> new Rectangle( 500, 500, 60, 80 ), () -> "Notes - Editor" );
         ct.handleNow( "[DO:carry||60]" );
         Thread.sleep( 200 );
-        eq( "carry started and moving", true, cw.applied.contains( "CARRY:Notes - Editor" ) );
+        eq( "carry started and moving", true, cw.applied.contains( "MOVE" ) );
         eq( "carried hidden from surface scan", true, AgentCarry.isCarried( 1 ) );
         ct.handleNow( "[DO:drop]" );
         Thread.sleep( 200 );

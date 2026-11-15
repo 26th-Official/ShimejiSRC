@@ -17,13 +17,20 @@ public interface WindowControl
         public final String title;
         public final Rectangle bounds;
         public final boolean minimized;
+        public final boolean maximized;
 
         public Info( final long handle, final String title, final Rectangle bounds, final boolean minimized )
+        {
+            this( handle, title, bounds, minimized, false );
+        }
+
+        public Info( final long handle, final String title, final Rectangle bounds, final boolean minimized, final boolean maximized )
         {
             this.handle = handle;
             this.title = title;
             this.bounds = bounds;
             this.minimized = minimized;
+            this.maximized = maximized;
         }
     }
 
@@ -35,11 +42,11 @@ public interface WindowControl
     /** Apply the operation; false if the system refused it. */
     boolean apply( Info window, Op op );
 
-    /**
-     * Hold the window just above the mascot: restores it if maximized/minimized, then moves it so it
-     * hangs over the mascot's head, clamped to {@code screen}. False once the window is gone.
-     */
-    boolean carry( Info window, Rectangle mascot, Rectangle screen );
+    /** Fresh state of one window, or null once it no longer exists. */
+    Info current( long handle );
+
+    /** Move the window's top-left corner to (x, y), keeping its size. False if it is gone. */
+    boolean moveTo( Info window, int x, int y );
 
     /** The backend for this platform, or null when there is none. */
     static WindowControl get()

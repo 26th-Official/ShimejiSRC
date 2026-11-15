@@ -11,12 +11,15 @@ import java.util.function.Supplier;
  * another process's window is a synchronous call that can stall if that app hangs).
  *
  * Ends on: "drop it", the time limit (default 2 min, max 10), the window closing, the kill switch,
- * or the agent being turned off. The carried window is also hidden from the mascots' window-surface
- * scan while carried so they don't try to stand on or climb the thing they are holding.
+ * the agent being turned off, or the USER TAKING THE WINDOW: dragging it somewhere else, maximizing
+ * or minimizing it. Resizing it is fine, the mascot keeps holding it. The carried window is also
+ * hidden from the mascots' window-surface scan so they don't try to stand on or climb it.
  */
 public final class AgentCarry
 {
     public static final long DEFAULT_MS = 120_000L, MAX_MS = 600_000L, STEP_MS = 33L;
+    /** How far (px) the window may differ from where we last put it before we call it "moved by the user". */
+    static final int MOVE_TOLERANCE = 8;
 
     private static final Set<Long> CARRIED = ConcurrentHashMap.newKeySet();
     private static final java.util.Map<Long, AgentCarry> ACTIVE = new ConcurrentHashMap<>();
@@ -39,12 +42,55 @@ public final class AgentCarry
         return n;
     }
 
+    /** One window's carry logic, separated from the thread so it can be tested step by step. */
+    static final class Carrier
+    {
+        private final WindowControl wc;
+        private final long handle;
+        private Rectangle last = null;
+        private boolean started = false;
+
+        Carrier( final WindowControl wc, final long handle ) { this.wc = wc; this.handle = handle; }
+
+        /** Advance one step. Returns null to keep carrying, else why it ended: "closed" or "taken". */
+        String step( final Rectangle mascot, final Rectangle screen )
+        {
+            WindowControl.Info cur = wc.current( handle );
+            if( cur == null ) return "closed";
+            if( !started )
+            {
+                if( cur.minimized || cur.maximized )
+                {
+                    wc.apply( cur, WindowControl.Op.RESTORE );
+                    cur = wc.current( handle );
+                    if( cur == null ) return "closed";
+                }
+                started = true;
+            }
+            else
+            {
+                // The user maximized or minimized it: they want it back.
+                if( cur.minimized || cur.maximized ) return "taken";
+                // Same size but not where we left it: they dragged it. (A size change is a resize: keep holding.)
+                if( last != null && cur.bounds.width == last.width && cur.bounds.height == last.height
+                        && ( Math.abs( cur.bounds.x - last.x ) > MOVE_TOLERANCE || Math.abs( cur.bounds.y - last.y ) > MOVE_TOLERANCE ) )
+                    return "taken";
+            }
+            final Rectangle t = AgentLayout.carryTarget( mascot, cur.bounds.width, cur.bounds.height, screen );
+            if( t.x != cur.bounds.x || t.y != cur.bounds.y )
+                if( !wc.moveTo( cur, t.x, t.y ) ) return "closed";
+            last = new Rectangle( t.x, t.y, cur.bounds.width, cur.bounds.height );
+            return null;
+        }
+    }
+
     /**
-     * Start carrying {@code w}. {@code onEnd} gets a short reason ("dropped", "time", "closed", "off").
+     * Start carrying {@code w}. {@code onEnd} gets a short reason ("dropped", "time", "closed", "taken", "off").
      * Replaces an existing carry of the same window.
      */
     public static void start( final WindowControl wc, final WindowControl.Info w, final Supplier<Rectangle> mascot,
-                              final Supplier<Rectangle> screen, final java.util.function.BooleanSupplier stillEnabled, final long durationMs, final java.util.function.Consumer<String> onEnd )
+                              final Supplier<Rectangle> screen, final java.util.function.BooleanSupplier stillEnabled,
+                              final long durationMs, final java.util.function.Consumer<String> onEnd )
     {
         final AgentCarry old = ACTIVE.get( w.handle );
         if( old != null ) old.stop = true;
@@ -52,6 +98,7 @@ public final class AgentCarry
         ACTIVE.put( w.handle, c );
         CARRIED.add( w.handle );
         final long until = System.currentTimeMillis() + Math.max( 5_000L, Math.min( MAX_MS, durationMs ) );
+        final Carrier carrier = new Carrier( wc, w.handle );
         final Thread t = new Thread( () ->
         {
             String reason = "dropped";
@@ -63,7 +110,11 @@ public final class AgentCarry
                     if( !stillEnabled.getAsBoolean() ) { reason = "off"; break; }
                     if( System.currentTimeMillis() >= until ) { reason = "time"; break; }
                     final Rectangle m = mascot.get(), s = screen.get();
-                    if( m != null && s != null && !wc.carry( w, m, s ) ) { reason = "closed"; break; }
+                    if( m != null && s != null )
+                    {
+                        final String why = carrier.step( m, s );
+                        if( why != null ) { reason = why; break; }
+                    }
                     Thread.sleep( STEP_MS );
                 }
             }
@@ -71,15 +122,14 @@ public final class AgentCarry
             catch( final Throwable ignored ) { reason = "closed"; }
             finally
             {
+                final boolean replaced = ACTIVE.get( w.handle ) != c && ACTIVE.containsKey( w.handle );
                 if( ACTIVE.get( w.handle ) == c ) { ACTIVE.remove( w.handle ); CARRIED.remove( w.handle ); }
-                if( onEnd != null && !( "dropped".equals( reason ) && c.replaced() ) ) onEnd.accept( reason );
+                if( onEnd != null && !replaced ) onEnd.accept( reason );
             }
         }, "agent-carry" );
         t.setDaemon( true );
         t.start();
     }
-
-    private boolean replaced() { return ACTIVE.get( handle ) != this && ACTIVE.containsKey( handle ); }
 
     /** Bounds of the screen the mascot is on (whole screen, not just work area: a window may sit over the taskbar). */
     public static Rectangle screenOf( final Rectangle mascot )

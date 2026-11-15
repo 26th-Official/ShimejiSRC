@@ -52,17 +52,26 @@ public final class WindowsWindowControl implements WindowControl
     }
 
     @Override
-    public boolean carry( final Info w, final Rectangle mascot, final Rectangle screen )
+    public Info current( final long handle )
+    {
+        final User32 u = User32.INSTANCE;
+        final Pointer h = new Pointer( handle );
+        if( u.IsWindow( h ) == 0 ) return null;
+        final RECT r = new RECT();
+        u.GetWindowRect( h, r );
+        final char[] t = new char[ 256 ];
+        final int n = u.GetWindowTextW( h, t, t.length );
+        return new Info( handle, n > 0 ? new String( t, 0, n ) : "", new Rectangle( r.left, r.top, r.right - r.left, r.bottom - r.top ),
+            u.IsIconic( h ) != 0, u.IsZoomed( h ) != 0 );
+    }
+
+    @Override
+    public boolean moveTo( final Info w, final int x, final int y )
     {
         final User32 u = User32.INSTANCE;
         final Pointer h = new Pointer( w.handle );
         if( u.IsWindow( h ) == 0 ) return false;
-        if( u.IsIconic( h ) != 0 || u.IsZoomed( h ) != 0 ) u.ShowWindow( h, SW_RESTORE );
-        final RECT r = new RECT();
-        u.GetWindowRect( h, r );
-        final Rectangle t = com.group_finity.mascot.assistant.AgentLayout.carryTarget(
-            mascot, r.right - r.left, r.bottom - r.top, screen );
-        if( t.x != r.left || t.y != r.top ) u.MoveWindow( h, t.x, t.y, t.width, t.height, 1 );
+        u.MoveWindow( h, x, y, w.bounds.width, w.bounds.height, 1 );
         return true;
     }
 
