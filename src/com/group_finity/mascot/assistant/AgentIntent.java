@@ -18,6 +18,14 @@ public final class AgentIntent
     private static final String DIR = "(left|right|top|bottom)";
     private static final Pattern SNAP_A = Pattern.compile( "^(?:snap|dock|put|move|send|tile)\\s+(.+?)\\s+(?:window\\s+)?(?:to|on|onto|at)\\s+(?:the\\s+)?" + DIR + "(?:\\s+(?:half|side|part))?(?:\\s+of\\s+(?:the|my)\\s+screen)?$" );
     private static final Pattern SNAP_B = Pattern.compile( "^(?:snap|dock|put|move|send|tile)\\s+(?:the\\s+|my\\s+)?" + DIR + "\\s+(?:window\\s+)?(?:to|on)\\s+(.+)$" ); // rare; kept simple
+    private static final String MON = "(other|another|second|2nd|next|third|3rd|primary|main|first|1st|secondary|left|right)";
+    private static final Pattern MONITOR_A = Pattern.compile(
+        "^(?:move|send|put|throw|shift|push|bring|take)\\s+(.+?)\\s+(?:over\\s+)?(?:to|onto|on)\\s+(?:the\\s+|my\\s+)*" + MON + "\\s+(?:one\\s+)?(?:monitor|screen|display)s?$" );
+    private static final Pattern MONITOR_B = Pattern.compile(
+        "^(?:move|send|put|throw|shift|push|bring|take)\\s+(.+?)\\s+(?:over\\s+)?(?:to|onto|on)\\s+(?:the\\s+|my\\s+)*(?:monitor|screen|display)\\s+(\\d)$" );
+    private static final Pattern MOVE_FILE = Pattern.compile(
+        "^(?:move|put|send|relocate|transfer)\\s+(?:the\\s+|my\\s+)?(.+?)\\s+(?:to|into|in)\\s+(?:the\\s+|my\\s+)?(.+?)$" );
+    private static final Pattern HAS_EXT = Pattern.compile( "\\.[a-z0-9]{1,5}$" );
     private static final Pattern CENTER = Pattern.compile( "^(?:center|centre)\\s+(.+)$" );
     private static final Pattern SIMPLE = Pattern.compile(
         "^(minimi[sz]e|hide|maximi[sz]e|fullscreen|restore|unminimi[sz]e|focus|switch\\s+to|bring\\s+up)\\s+(.+)$" );
@@ -72,6 +80,13 @@ public final class AgentIntent
         }
         if( ( m = UNDO.matcher( t ) ).matches() ) { out.add( new String[] { "undo" } ); return out; }
         if( ( m = ORGANIZE.matcher( t ) ).matches() ) { out.add( new String[] { "organize", m.group( 1 ).trim() } ); return out; }
+        if( ( m = MONITOR_A.matcher( t ) ).matches() ) { out.add( new String[] { "monitor", m.group( 2 ), clean( m.group( 1 ) ) } ); return out; }
+        if( ( m = MONITOR_B.matcher( t ) ).matches() ) { out.add( new String[] { "monitor", m.group( 2 ), clean( m.group( 1 ) ) } ); return out; }
+        if( ( m = MOVE_FILE.matcher( t ) ).matches() && isFileMove( m.group( 1 ), m.group( 2 ) ) )
+        {
+            out.add( new String[] { "move", m.group( 1 ).replaceAll( "^file\\s+", "" ).replaceAll( "\\s+file$", "" ).trim(), m.group( 2 ).replaceAll( "\\s+folder$", "" ).trim() } );
+            return out;
+        }
         if( ( m = SNAP_A.matcher( t ) ).matches() ) { out.add( new String[] { "window", m.group( 2 ), clean( m.group( 1 ) ) } ); return out; }
         if( ( m = SNAP_B.matcher( t ) ).matches() ) { out.add( new String[] { "window", m.group( 1 ), clean( m.group( 2 ) ) } ); return out; }
         if( ( m = CENTER.matcher( t ) ).matches() ) { out.add( new String[] { "window", "center", clean( m.group( 1 ) ) } ); return out; }
@@ -85,6 +100,14 @@ public final class AgentIntent
             if( !target.isEmpty() && !target.startsWith( "on " ) && !target.startsWith( "me " ) ) out.add( new String[] { "window", op, target } );
         }
         return out;
+    }
+
+    /** A file move names a file (has an extension, or says "file") and a destination that isn't a snap/monitor word. */
+    private static boolean isFileMove( final String src, final String dest )
+    {
+        if( dest.matches( "(?:the\\s+)?(?:left|right|top|bottom|center|centre)(?:\\s+.*)?" ) ) return false;
+        if( dest.matches( ".*\\b(?:monitor|screen|display)\\b.*" ) ) return false;
+        return HAS_EXT.matcher( src.trim() ).find() || src.matches( "(?:file\\s+.+|.+\\s+file|this|it|that)" ) && src.contains( "file" );
     }
 
     /** "take" and "hold" are everyday verbs; only treat them as carry when the user also says around/carry/walk. */

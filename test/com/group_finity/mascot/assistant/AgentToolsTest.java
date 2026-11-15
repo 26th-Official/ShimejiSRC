@@ -22,11 +22,15 @@ public class AgentToolsTest
         /** Current geometry per handle (all test windows share handle 1 unless set). */
         Rectangle rect = new Rectangle( 100, 100, 400, 300 );
         boolean gone = false, maximized = false, minimized = false;
+        List<Rectangle> mons = List.of();
+        public List<Rectangle> monitors() { return mons; }
+        public boolean place( final Info w, final Rectangle r ) { rect = new Rectangle( r ); applied.add( "PLACE" ); return true; }
         public List<Info> list() { return wins; }
         public boolean apply( final Info w, final Op op )
         {
             applied.add( op + ":" + w.title );
             if( op == Op.RESTORE ) { maximized = false; minimized = false; }
+            if( op == Op.MAXIMIZE ) maximized = true;
             return true;
         }
         public Info current( final long handle ) { return gone ? null : new Info( handle, "t", new Rectangle( rect ), minimized, maximized ); }
@@ -250,6 +254,96 @@ public class AgentToolsTest
         eq( "browser alias", "Inbox - Mozilla Firefox", AgentTools.matchWindow( br, "browser" ).match.title );
         eq( "librewolf is a browser", "Home - LibreWolf", AgentTools.matchWindow( List.of( w( "Home - LibreWolf" ), w( "Discord" ) ), "browser" ).match.title );
         eq( "two browsers ambiguous", null, AgentTools.matchWindow( List.of( w( "A - Google Chrome" ), w( "B - Mozilla Firefox" ) ), "browser" ).match );
+
+        // ---- monitors: geometry ----
+        final List<Rectangle> mons2 = List.of( new Rectangle( 0, 0, 1920, 1040 ), new Rectangle( 1920, 0, 2560, 1400 ) );
+        final Rectangle onA = new Rectangle( 100, 100, 800, 600 );
+        eq( "other from first", 1, AgentLayout.pickMonitor( mons2, onA, "other" ) );
+        eq( "other wraps", 0, AgentLayout.pickMonitor( mons2, new Rectangle( 2000, 100, 800, 600 ), "other" ) );
+        eq( "right of first", 1, AgentLayout.pickMonitor( mons2, onA, "right" ) );
+        eq( "left of first none", -1, AgentLayout.pickMonitor( mons2, onA, "left" ) );
+        eq( "third none", -1, AgentLayout.pickMonitor( mons2, onA, "third" ) );
+        eq( "primary", 0, AgentLayout.pickMonitor( mons2, new Rectangle( 2000, 100, 800, 600 ), "primary" ) );
+        eq( "one monitor has no other", -1, AgentLayout.pickMonitor( List.of( mons2.get( 0 ) ), onA, "other" ) );
+        final Rectangle moved = AgentLayout.toMonitor( onA, mons2.get( 0 ), mons2.get( 1 ) );
+        eq( "moved inside target", true, mons2.get( 1 ).contains( moved ) );
+        eq( "size kept", 800, moved.width );
+        final Rectangle big = AgentLayout.toMonitor( new Rectangle( 0, 0, 1920, 1040 ), mons2.get( 0 ), new Rectangle( 0, 0, 1280, 720 ) );
+        eq( "shrunk to fit", new Rectangle( 0, 0, 1280, 720 ), big );
+        eq( "monitorIndex by overlap", 1, AgentLayout.monitorIndex( mons2, new Rectangle( 1800, 100, 400, 300 ) ) );
+        eq( "monitorIndex straddle picks more area", 1, AgentLayout.monitorIndex( mons2, new Rectangle( 1800, 100, 400, 300 ) ) );
+
+        // ---- monitors: intents ----
+        eq( "intent other monitor", "monitor|other|", String.join( "|", AgentIntent.parse( "move this to my other monitor" ).get( 0 ) ) );
+        eq( "intent named", "monitor|second|firefox", String.join( "|", AgentIntent.parse( "Hey, send my firefox window to the second screen" ).get( 0 ) ) );
+        eq( "intent monitor 2", "monitor|2|chrome", String.join( "|", AgentIntent.parse( "move chrome to monitor 2" ).get( 0 ) ) );
+        eq( "snap still snaps", "window", AgentIntent.parse( "move chrome to the left" ).get( 0 )[ 0 ] );
+
+        // ---- monitors: tool flow ----
+        final FakeWin mw = new FakeWin();
+        mw.wins.add( w( "Google Chrome" ) );
+        mw.mons = mons2;
+        mw.rect = new Rectangle( 100, 100, 800, 600 );
+        final List<String> msaid = new ArrayList<>();
+        final AgentTools mt = new AgentTools( p, mw, ( x, y ) -> true, msaid::add, journal, home );
+        mt.handleNow( "[DO:monitor|other|chrome]" );
+        eq( "window now on monitor 2", true, mons2.get( 1 ).contains( mw.rect ) );
+        eq( "monitor move reported", "There you go.", msaid.get( 0 ) );
+        mt.handleNow( "[DO:monitor|right|chrome]" );
+        eq( "no screen to the right", true, msaid.get( 1 ).contains( "no screen" ) );
+        mw.mons = List.of( mons2.get( 0 ) );
+        mt.handleNow( "[DO:monitor|other|chrome]" );
+        eq( "single screen message", "I only see one screen.", msaid.get( 2 ) );
+        mw.mons = mons2;
+        mw.maximized = true;
+        mw.rect = new Rectangle( 0, 0, 1920, 1040 );
+        mt.handleNow( "[DO:monitor|other|chrome]" );
+        eq( "maximized window restored then re-maximized", true, mw.applied.contains( "RESTORE:t" ) && mw.applied.contains( "MAXIMIZE:t" ) );
+
+        // ---- file mover ----
+        final Path mh = Files.createTempDirectory( "mover" );
+        Files.createDirectories( mh.resolve( "Downloads" ) );
+        Files.createDirectories( mh.resolve( "Documents" ).resolve( "Taxes" ) );
+        Files.write( mh.resolve( "Downloads" ).resolve( "Report Final.pdf" ), new byte[] { 1 } );
+        Files.write( mh.resolve( "Downloads" ).resolve( "notes.txt" ), new byte[] { 1 } );
+        Files.write( mh.resolve( "Downloads" ).resolve( "notes2.txt" ), new byte[] { 1 } );
+        Files.write( mh.resolve( "Documents" ).resolve( "dup.txt" ), new byte[] { 1 } );
+        Files.write( mh.resolve( "Downloads" ).resolve( "dup.txt" ), new byte[] { 1 } );
+        final List<Path> mroots = FileMover.roots( p, mh );
+        eq( "roots include Documents", true, mroots.contains( mh.resolve( "Documents" ) ) );
+        eq( "found by base name", "Report Final.pdf", FileMover.plan( "report final", "documents", mroots ).move.from.getFileName().toString() );
+        eq( "dest subfolder", mh.resolve( "Documents" ).resolve( "Taxes" ).resolve( "Report Final.pdf" ), FileMover.plan( "report final.pdf", "the taxes folder", mroots ).move.to );
+        eq( "ambiguous file", true, FileMover.plan( "note", "documents", mroots ).error.startsWith( "Which one" ) );
+        eq( "exact beats prefix", "notes.txt", FileMover.plan( "notes.txt", "documents", mroots ).move.from.getFileName().toString() );
+        eq( "no overwrite", true, FileMover.plan( "dup.txt", "documents", mroots ).error != null );
+        eq( "unknown folder", true, FileMover.plan( "notes.txt", "nowhere", mroots ).error.contains( "can't find a folder" ) );
+        eq( "this file asks", true, FileMover.plan( "this", "documents", mroots ).error.startsWith( "Which file" ) );
+        eq( "path traversal refused", true, FileMover.plan( "..\\x.txt", "documents", mroots ).error != null );
+        eq( "intent move file", "move|report.pdf|documents", String.join( "|", AgentIntent.parse( "move report.pdf to my documents folder" ).get( 0 ) ) );
+        eq( "intent says file", "move|budget|desktop", String.join( "|", AgentIntent.parse( "can you move the budget file to desktop" ).get( 0 ) ) );
+        eq( "window move not a file move", "window", AgentIntent.parse( "move chrome to the right" ).get( 0 )[ 0 ] );
+        eq( "no ext no file word: ignored", 0, AgentIntent.parse( "move chrome to documents" ).size() );
+
+        final Properties mp = new Properties();
+        mp.setProperty( "AgentEnabled", "true" );
+        final List<String> fsaid = new ArrayList<>();
+        final boolean[] fyes = { false };
+        final String[] asked = { null };
+        final AgentTools ft = new AgentTools( mp, null, ( ti, m ) -> { asked[ 0 ] = ti + "|" + m; return fyes[ 0 ]; }, fsaid::add, mh.resolve( "j.tsv" ), mh );
+        ft.handleNow( "[DO:move|report final.pdf|documents]" );
+        eq( "declined move leaves file", true, Files.exists( mh.resolve( "Downloads" ).resolve( "Report Final.pdf" ) ) );
+        eq( "confirm names file", true, asked[ 0 ].contains( "Report Final.pdf" ) );
+        fyes[ 0 ] = true;
+        ft.handleNow( "[DO:move|report final.pdf|documents]" );
+        eq( "confirmed move happened", true, Files.exists( mh.resolve( "Documents" ).resolve( "Report Final.pdf" ) ) );
+        ft.handleNow( "[DO:undo]" );
+        eq( "undo moves file back", true, Files.exists( mh.resolve( "Downloads" ).resolve( "Report Final.pdf" ) ) );
+
+        // ---- confirm bubble fade ----
+        eq( "solid early", 1f, AgentConfirmBubble.opacityFor( 20000 ) );
+        eq( "half at 2s", 0.5f, AgentConfirmBubble.opacityFor( 2000 ) );
+        eq( "never fully invisible", 0.15f, AgentConfirmBubble.opacityFor( 10 ) );
+        eq( "headless asks deny", false, AgentConfirmBubble.ask( "t", "m", () -> new Rectangle( 0, 0, 10, 10 ), 100 ) );
 
         System.out.println( fails == 0 ? "AgentToolsTest: all passed" : "AgentToolsTest: " + fails + " FAILED" );
         if( fails > 0 ) System.exit( 1 );

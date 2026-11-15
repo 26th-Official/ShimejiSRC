@@ -66,6 +66,39 @@ public final class WindowsWindowControl implements WindowControl
     }
 
     @Override
+    public List<Rectangle> monitors()
+    {
+        final List<Rectangle> out = new ArrayList<>();
+        final User32.MONITORENUMPROC cb = ( hMon, hdc, rc, data ) ->
+        {
+            final MONITORINFO mi = new MONITORINFO();
+            mi.cbSize = new NativeLong( mi.size() );
+            mi.write();
+            if( User32.INSTANCE.GetMonitorInfoW( hMon, mi ) )
+            {
+                mi.read();
+                out.add( new Rectangle( mi.rcWork.left, mi.rcWork.top,
+                    mi.rcWork.right - mi.rcWork.left, mi.rcWork.bottom - mi.rcWork.top ) );
+            }
+            return true;
+        };
+        try { User32.INSTANCE.EnumDisplayMonitors( null, null, cb, null ); }
+        catch( final Throwable t ) { return new ArrayList<>(); }
+        out.sort( java.util.Comparator.<Rectangle>comparingInt( r -> r.x ).thenComparingInt( r -> r.y ) );
+        return out;
+    }
+
+    @Override
+    public boolean place( final Info w, final Rectangle r )
+    {
+        final User32 u = User32.INSTANCE;
+        final Pointer h = new Pointer( w.handle );
+        if( u.IsWindow( h ) == 0 ) return false;
+        u.MoveWindow( h, r.x, r.y, r.width, r.height, 1 );
+        return true;
+    }
+
+    @Override
     public boolean moveTo( final Info w, final int x, final int y )
     {
         final User32 u = User32.INSTANCE;

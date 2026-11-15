@@ -48,6 +48,12 @@ public interface WindowControl
     /** Move the window's top-left corner to (x, y), keeping its size. False if it is gone. */
     boolean moveTo( Info window, int x, int y );
 
+    /** Work areas of all monitors in Win32 coordinates (the same space as window bounds), left to right. */
+    default List<Rectangle> monitors() { return List.of(); }
+
+    /** Move and resize the window to {@code r}. False if it is gone. */
+    default boolean place( final Info window, final Rectangle r ) { return moveTo( window, r.x, r.y ); }
+
     /** The backend for this platform, or null when there is none. */
     static WindowControl get()
     {
