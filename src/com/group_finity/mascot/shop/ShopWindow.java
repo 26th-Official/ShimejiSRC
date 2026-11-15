@@ -67,6 +67,7 @@ public final class ShopWindow extends JDialog
     private final JProgressBar bar = new JProgressBar();
     private ShopCatalog catalog = null;
     private boolean busy = false;
+    private String note = "";
 
     public static void showShop( final JFrame owner )
     {
@@ -180,7 +181,8 @@ public final class ShopWindow extends JDialog
                 {
                     final Object[] r = get();
                     catalog = (ShopCatalog) r[ 0 ];
-                    status.setText( r[ 1 ].toString().isEmpty() && catalog != null ? catalog.entries().size() + " mascots" : r[ 1 ].toString() );
+                    note = catalog != null && !r[ 1 ].toString().isEmpty() ? " (offline - built-in list)" : "";
+                    if( catalog == null ) status.setText( r[ 1 ].toString() );
                 }
                 catch( final Exception e ) { status.setText( "Couldn't load the catalog." ); }
                 rebuild();
@@ -202,6 +204,11 @@ public final class ShopWindow extends JDialog
                 if( !q.isEmpty() && !hay.contains( q ) ) continue;
                 list.add( card( e ) );
             }
+        }
+        if( catalog != null )
+        {
+            final int shown = list.getComponentCount(), total = catalog.entries().size();
+            status.setText( ( shown == total ? total + " mascots" : shown + " of " + total + " mascots" ) + note );
         }
         if( list.getComponentCount() == 0 ) list.add( new JLabel( "  Nothing to show." ) );
         list.add( Box.createVerticalGlue() );
