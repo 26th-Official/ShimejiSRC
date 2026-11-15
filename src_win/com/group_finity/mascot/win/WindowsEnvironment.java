@@ -371,6 +371,9 @@ public class WindowsEnvironment extends Environment
 
     private static boolean isIE( final Pointer ie )
     {
+        // A window the agent is carrying is glued to a mascot: never a surface to stand on or climb.
+        if( com.group_finity.mascot.assistant.AgentCarry.isCarried( Pointer.nativeValue( ie ) ) )
+            return false;
         final Boolean cached = ieCache.get( ie );
         if( Boolean.TRUE.equals( cached ) )
             return true;

@@ -164,7 +164,10 @@ public final class AssistantPrompts
 
         // Keyword-gated like permanentMemories: only injects when the user's words
         // match indexed paths, so unrelated chats cost no extra prompt tokens.
-        final String driveBlock = userText != null
+        // An agent command ("clean up my Downloads") is carried out by the agent, not discussed: skip the
+        // drive-suggestion context so the model doesn't answer it with "you could delete X".
+        final boolean agentCmd = userText != null && AgentTools.forHost( m ).enabled() && !AgentIntent.parse( userText ).isEmpty();
+        final String driveBlock = userText != null && !agentCmd
             ? com.group_finity.mascot.assistant.DriveIndexTool.buildContextBlock( userText ) : "";
 
         final String speechRule = getSpeechRule( cfg );
@@ -186,6 +189,7 @@ public final class AssistantPrompts
             + "\n- Only when the user explicitly asks you to set a timer, reminder, or alarm in THIS message — never on your own initiative, never because a topic reminded you of one: append [TIMER:VALUE:reminder text]. VALUE = whole minutes for durations, e.g. [TIMER:15:reminder text], OR the exact clock time the user stated for specific times, e.g. [TIMER:5:30pm:reminder text] when the user says 'at 5:30pm'. For clock times: write the time EXACTLY as the user said it — do NOT convert to minutes, do NOT compute anything. Java handles the math. The reminder text must be drawn from what the user actually said, never invented."
             + "\n- You may optionally append [ACTION:BehaviorName] after your spoken text to trigger a matching animation. The tag is silent — not spoken. Omit it when nothing fits naturally."
             + "\n- To save something permanently for future conversations: append [REMEMBER:keyword1,keyword2|the fact to remember]. Use short, specific keywords the user is likely to mention again. The tag is silent."
+            + ( agentCmd ? "\n- The user just gave you a computer command. The system is carrying it out for you right now: answer with ONE short in-character line acknowledging it. Do not suggest deleting files and do not describe what you will do in detail." : "" )
             + AgentTools.forHost( m ).promptBlock()
             + windowContext
             + "\n---"

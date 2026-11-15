@@ -21,6 +21,7 @@ public class AgentToolsTest
         final List<String> applied = new ArrayList<>();
         public List<Info> list() { return wins; }
         public boolean apply( final Info w, final Op op ) { applied.add( op + ":" + w.title ); return true; }
+        public boolean carry( final Info w, final Rectangle m, final Rectangle s ) { applied.add( "CARRY:" + w.title ); return true; }
     }
 
     static WindowControl.Info w( final String t ) { return new WindowControl.Info( 1, t, new Rectangle( 0, 0, 100, 100 ), false ); }
@@ -155,6 +156,49 @@ public class AgentToolsTest
 
         eq( "show me is chit-chat", 0, AgentIntent.parse( "show me the time" ).size() );
         eq( "focus on is chit-chat", 0, AgentIntent.parse( "focus on my work" ).size() );
+
+        // carry / drop intent
+        eq( "carry this window", "carry||180", String.join( "|", AgentIntent.parse( "hey, carry this window around for a while" ).get( 0 ) ) );
+        eq( "carry named", "carry|browser|120", String.join( "|", AgentIntent.parse( "carry my browser around" ).get( 0 ) ) );
+        eq( "carry minutes", "carry|notepad|300", String.join( "|", AgentIntent.parse( "carry notepad around for 5 minutes" ).get( 0 ) ) );
+        eq( "carry capped", "carry|chrome|600", String.join( "|", AgentIntent.parse( "carry chrome around for 90 minutes" ).get( 0 ) ) );
+        eq( "pick up", "carry|discord|120", String.join( "|", AgentIntent.parse( "pick up discord" ).get( 0 ) ) );
+        eq( "drop it", "drop", String.join( "|", AgentIntent.parse( "ok drop it" ).get( 0 ) ) );
+        eq( "put it down", "drop", String.join( "|", AgentIntent.parse( "put it down" ).get( 0 ) ) );
+        eq( "stop carrying", "drop", String.join( "|", AgentIntent.parse( "stop carrying" ).get( 0 ) ) );
+        eq( "take is chit-chat", 0, AgentIntent.parse( "take a look at this" ).size() );
+        eq( "hold is chit-chat", 0, AgentIntent.parse( "hold on a second" ).size() );
+
+        // carry geometry: centred above the mascot, clamped
+        final Rectangle scr = new Rectangle( 0, 0, 1920, 1080 );
+        eq( "carry above head", new Rectangle( 830, 396, 400, 300 ), AgentLayout.carryTarget( new Rectangle( 1000, 700, 60, 80 ), 400, 300, scr ) );
+        eq( "carry clamps left/top", new Rectangle( 0, 0, 400, 300 ), AgentLayout.carryTarget( new Rectangle( 10, 100, 60, 80 ), 400, 300, scr ) );
+        eq( "carry clamps right", new Rectangle( 1520, 396, 400, 300 ), AgentLayout.carryTarget( new Rectangle( 1900, 700, 60, 80 ), 400, 300, scr ) );
+        eq( "huge window pinned", new Rectangle( 0, 0, 2000, 1200 ), AgentLayout.carryTarget( new Rectangle( 900, 900, 60, 80 ), 2000, 1200, scr ) );
+
+        // carry via tool: "this window" uses the active window, drop stops it
+        final FakeWin cw = new FakeWin();
+        cw.wins.add( w( "Notes - Editor" ) );
+        final List<String> csaid = new ArrayList<>();
+        final AgentTools ct = new AgentTools( p, cw, ( x, y ) -> true, csaid::add, journal, home )
+            .withHost( () -> new Rectangle( 500, 500, 60, 80 ), () -> "Notes - Editor" );
+        ct.handleNow( "[DO:carry||60]" );
+        Thread.sleep( 200 );
+        eq( "carry started and moving", true, cw.applied.contains( "CARRY:Notes - Editor" ) );
+        eq( "carried hidden from surface scan", true, AgentCarry.isCarried( 1 ) );
+        ct.handleNow( "[DO:drop]" );
+        Thread.sleep( 200 );
+        eq( "dropped", false, AgentCarry.isCarried( 1 ) );
+        eq( "drop reported", true, csaid.stream().anyMatch( x -> x.contains( "Here you go" ) ) );
+        csaid.clear();
+        ct.handleNow( "[DO:drop]" );
+        eq( "drop with nothing", true, csaid.size() == 1 && csaid.get( 0 ).contains( "not carrying" ) );
+
+        // generic folder word tidies the single allowed folder
+        said.clear();
+        yes[ 0 ] = false;
+        t.handleNow( "[DO:organize|drive]" );
+        eq( "generic word reaches the Downloads preview", true, said.size() == 1 && said.get( 0 ).contains( "left it alone" ) );
 
         // aliases
         final List<WindowControl.Info> br = List.of( w( "Inbox - Mozilla Firefox" ), w( "Discord" ) );

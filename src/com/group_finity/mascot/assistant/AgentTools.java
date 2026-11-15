@@ -46,6 +46,8 @@ public final class AgentTools
     private final Reporter reporter;
     private final Path journal;
     private final Path home;
+    private java.util.function.Supplier<java.awt.Rectangle> mascotBounds = null;
+    private java.util.function.Supplier<String> activeTitle = () -> "";
 
     public AgentTools( final Properties props, final WindowControl windows, final Confirmer confirmer,
                        final Reporter reporter, final Path journal, final Path home )
@@ -69,7 +71,16 @@ public final class AgentTools
                 final AssistantBubble b = host.assistantBubble();
                 if( b != null ) b.showSay( text, host.getBounds() );
             } ),
-            Paths.get( "agent-journal.tsv" ), Paths.get( System.getProperty( "user.home" ) ) );
+            Paths.get( "agent-journal.tsv" ), Paths.get( System.getProperty( "user.home" ) ) )
+            .withHost( host::getBounds, host::lastActiveWindowTitle );
+    }
+
+    /** Mascot geometry and "the window the user was on when they spoke to me" (for "this window"). */
+    public AgentTools withHost( final java.util.function.Supplier<java.awt.Rectangle> bounds, final java.util.function.Supplier<String> active )
+    {
+        this.mascotBounds = bounds;
+        this.activeTitle = active == null ? () -> "" : active;
+        return this;
     }
 
     public boolean enabled() { return AgentPolicy.enabled( props ); }
@@ -150,6 +161,8 @@ public final class AgentTools
             case "window":   doWindow( t.length > 1 ? t[ 1 ] : "", t.length > 2 ? t[ 2 ] : "" ); break;
             case "organize": doOrganize( t.length > 1 ? t[ 1 ] : "" ); break;
             case "undo":     doUndo(); break;
+            case "carry":    doCarry( t.length > 1 ? t[ 1 ] : "", t.length > 2 ? t[ 2 ] : "" ); break;
+            case "drop":     doDrop(); break;
             default: log.info( "[Agent] unknown tool ignored: " + t[ 0 ] );
         }
     }
@@ -228,10 +241,10 @@ public final class AgentTools
         if( windows == null ) { reporter.say( "I can't control windows on this system." ); return; }
         final WindowControl.Op op = opOf( opWord );
         if( op == null ) return;
-        final Match m = matchWindow( windows.list(), query );
+        final Match m = matchWindow( windows.list(), effectiveQuery( query ) );
         if( m.match == null )
         {
-            if( m.ambiguous == null || m.ambiguous.isEmpty() ) reporter.say( "I can't find a window called \"" + query + "\"." );
+            if( m.ambiguous == null || m.ambiguous.isEmpty() ) reporter.say( "I can't find a window called \"" + effectiveQuery( query ) + "\"." );
             else
             {
                 final StringBuilder sb = new StringBuilder( "Which one? " );
@@ -243,14 +256,53 @@ public final class AgentTools
         if( !windows.apply( m.match, op ) ) reporter.say( "Windows wouldn't let me do that." );
     }
 
+    /** "this window" arrives as an empty name: use the window the user was on when they spoke to the mascot. */
+    private String effectiveQuery( final String query )
+    {
+        if( !query.trim().isEmpty() ) return query;
+        final String a = activeTitle.get();
+        return a == null ? "" : a;
+    }
+
+    // carry ---------------------------------------------------------------------
+
+    private void doCarry( final String query, final String secs )
+    {
+        if( windows == null || mascotBounds == null ) { reporter.say( "I can't carry windows on this system." ); return; }
+        final String q = effectiveQuery( query );
+        if( q.trim().isEmpty() ) { reporter.say( "Which window? Click me while it's in front, or name it." ); return; }
+        final Match m = matchWindow( windows.list(), q );
+        if( m.match == null )
+        {
+            reporter.say( m.ambiguous == null || m.ambiguous.isEmpty() ? "I can't find a window called \"" + q + "\"." : "Which one? Say its name." );
+            return;
+        }
+        long ms = AgentCarry.DEFAULT_MS;
+        try { ms = Long.parseLong( secs ) * 1000L; } catch( final NumberFormatException ignored ) { }
+        final WindowControl wc = windows;
+        AgentCarry.start( wc, m.match, mascotBounds, () -> AgentCarry.screenOf( mascotBounds.get() ), this::enabled, ms,
+            reason -> reporter.say( "closed".equals( reason ) ? "The window's gone, so I'm done." : "off".equals( reason ) ? "Okay, I stopped." : "Here you go." ) );
+        reporter.say( "Got it. Say \"drop it\" whenever." );
+    }
+
+    private void doDrop()
+    {
+        if( AgentCarry.dropAll() == 0 ) reporter.say( "I'm not carrying anything." );
+    }
+
     private static String shorten( final String s ) { return s.length() <= 40 ? s : s.substring( 0, 37 ) + "..."; }
 
     // files ---------------------------------------------------------------------
 
+    private static final java.util.Set<String> GENERIC_FOLDER_WORDS = java.util.Set.of(
+        "drive", "hard drive", "computer", "pc", "files", "stuff", "everything", "disk", "system", "storage", "folder", "folders", "downloads folder" );
+
     private void doOrganize( final String folderWords ) throws Exception
     {
         final List<Path> allowed = AgentPolicy.allowedFolders( props, home );
-        final Path root = AgentPolicy.resolveFolder( folderWords, allowed );
+        Path root = AgentPolicy.resolveFolder( folderWords, allowed );
+        if( root == null && allowed.size() == 1 && GENERIC_FOLDER_WORDS.contains( folderWords.toLowerCase( Locale.ROOT ).trim() ) )
+            root = allowed.get( 0 ); // "clean up my drive/computer" -> the one folder it may touch (still previewed + confirmed)
         if( root == null || !java.nio.file.Files.isDirectory( root ) )
         {
             reporter.say( "I'm only allowed to tidy: " + names( allowed ) + "." );

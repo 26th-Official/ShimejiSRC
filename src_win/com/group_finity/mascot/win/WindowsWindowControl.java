@@ -52,6 +52,21 @@ public final class WindowsWindowControl implements WindowControl
     }
 
     @Override
+    public boolean carry( final Info w, final Rectangle mascot, final Rectangle screen )
+    {
+        final User32 u = User32.INSTANCE;
+        final Pointer h = new Pointer( w.handle );
+        if( u.IsWindow( h ) == 0 ) return false;
+        if( u.IsIconic( h ) != 0 || u.IsZoomed( h ) != 0 ) u.ShowWindow( h, SW_RESTORE );
+        final RECT r = new RECT();
+        u.GetWindowRect( h, r );
+        final Rectangle t = com.group_finity.mascot.assistant.AgentLayout.carryTarget(
+            mascot, r.right - r.left, r.bottom - r.top, screen );
+        if( t.x != r.left || t.y != r.top ) u.MoveWindow( h, t.x, t.y, t.width, t.height, 1 );
+        return true;
+    }
+
+    @Override
     public boolean apply( final Info w, final Op op )
     {
         final User32 u = User32.INSTANCE;

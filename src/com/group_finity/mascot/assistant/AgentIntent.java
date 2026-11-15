@@ -25,15 +25,33 @@ public final class AgentIntent
         "^(?:clean|tidy|organi[sz]e|sort)(?:\\s+up)?\\s+(?:out\\s+)?(?:the\\s+|my\\s+)?([a-z0-9 _-]+?)(?:\\s+folder)?$" );
     private static final Pattern UNDO = Pattern.compile( "^undo(?:\\s+(?:that|it|the\\s+(?:tidy|cleanup|clean up|sort|organi[sz]ing)))?$" );
 
+    private static final Pattern CARRY = Pattern.compile(
+        "^(?:carry|take|haul|lug|pick up|pickup|hold|lift)\\s+(.+?)(?:\\s+(?:and\\s+carry\\s+(?:it\\s+)?)?(?:around|about|with you|for a walk|along))?(?:\\s+for\\s+(?:a while|a bit|a little|some time|(\\d+)\\s*(seconds?|secs?|minutes?|mins?)))?$" );
+    private static final Pattern DROP = Pattern.compile(
+        "^(?:(?:ok(?:ay)?\\s+)?(?:drop|release|put down|set down|let go of|let go|stop carrying)(?:\\s+(?:it|that|them|the window|this window|my window|the app))?(?:\\s+down)?|put (?:it|that|the window|this window|my window) down|that'?s enough|you can put (?:it|that) down)$" );
+
     /** Tags implied by what the user said, or an empty list. */
     public static List<String[]> parse( final String userText )
     {
         final List<String[]> out = new ArrayList<>();
         if( userText == null ) return out;
         String t = userText.toLowerCase( Locale.ROOT ).trim();
-        t = t.replaceAll( "[.!?,]+$", "" ).replaceAll( "^(?:hey |ok |okay |please |can you |could you |would you |will you |go ahead and |just )+", "" )
+        t = t.replaceAll( "[.!?,]+$", "" ).replaceAll( "^(?:(?:hey|ok|okay|please|can you|could you|would you|will you|go ahead and|just)[ ,]+)+", "" )
              .replaceAll( "\\s+please$", "" ).replaceAll( "\\s+", " " ).trim();
         Matcher m;
+        if( DROP.matcher( t ).matches() ) { out.add( new String[] { "drop" } ); return out; }
+        if( ( m = CARRY.matcher( t ) ).matches() && wantsCarry( t ) )
+        {
+            long secs = 180;
+            if( m.group( 2 ) != null )
+            {
+                secs = Long.parseLong( m.group( 2 ) ) * ( m.group( 3 ).startsWith( "m" ) ? 60 : 1 );
+            }
+            else if( t.contains( "for a bit" ) || t.contains( "for a little" ) ) secs = 90;
+            else if( !t.contains( "for a while" ) && !t.contains( "some time" ) ) secs = 120;
+            out.add( new String[] { "carry", clean( m.group( 1 ) ), Long.toString( Math.min( 600, secs ) ) } );
+            return out;
+        }
         if( ( m = UNDO.matcher( t ) ).matches() ) { out.add( new String[] { "undo" } ); return out; }
         if( ( m = ORGANIZE.matcher( t ) ).matches() ) { out.add( new String[] { "organize", m.group( 1 ).trim() } ); return out; }
         if( ( m = SNAP_A.matcher( t ) ).matches() ) { out.add( new String[] { "window", m.group( 2 ), clean( m.group( 1 ) ) } ); return out; }
@@ -49,6 +67,13 @@ public final class AgentIntent
             if( !target.isEmpty() && !target.startsWith( "on " ) && !target.startsWith( "me " ) ) out.add( new String[] { "window", op, target } );
         }
         return out;
+    }
+
+    /** "take" and "hold" are everyday verbs; only treat them as carry when the user also says around/carry/walk. */
+    private static boolean wantsCarry( final String t )
+    {
+        return t.contains( "carry" ) || t.contains( "around" ) || t.contains( "with you" ) || t.contains( "for a walk" )
+            || t.startsWith( "pick up" ) || t.startsWith( "pickup" ) || t.startsWith( "lift" );
     }
 
     /** Drop filler so "my browser window" becomes "browser". */

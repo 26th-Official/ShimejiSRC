@@ -35,6 +35,12 @@ public interface WindowControl
     /** Apply the operation; false if the system refused it. */
     boolean apply( Info window, Op op );
 
+    /**
+     * Hold the window just above the mascot: restores it if maximized/minimized, then moves it so it
+     * hangs over the mascot's head, clamped to {@code screen}. False once the window is gone.
+     */
+    boolean carry( Info window, Rectangle mascot, Rectangle screen );
+
     /** The backend for this platform, or null when there is none. */
     static WindowControl get()
     {
