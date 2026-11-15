@@ -563,6 +563,9 @@ public class Mascot implements com.group_finity.mascot.assistant.AssistantHost
         // instance across all mascots (idempotent). LLM-free: only samples + logs.
         if( assistantMode ) com.group_finity.mascot.assistant.SituationModel.ensureStarted();
 
+        // Agent: repair a file left parked by an interrupted visible move (once per run).
+        if( assistantMode && Main.getInstance( ) != null ) com.group_finity.mascot.assistant.AgentTools.startup( Main.getInstance( ).getProperties( ) );
+
         // Mascots flagged for it get a live console/log readout projected ahead of
         // them (2B by default; opt-in for any via <ConsoleReadout>true</ConsoleReadout>).
         if( assistantMode && wantsConsoleReadout() )

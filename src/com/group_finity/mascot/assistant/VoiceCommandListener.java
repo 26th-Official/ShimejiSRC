@@ -86,10 +86,22 @@ public class VoiceCommandListener
 
     // ── Endpoint detection ────────────────────────────────────────────────────
     // Monitors mic energy per chunk. On speech onset, records into a command
-    // buffer. When silence persists for SILENCE_HOLD_MS after speech, the
+    // buffer. When silence persists for VoiceSilenceHoldMs after speech, the
     // segment is immediately sent to Whisper — no poll wait, no video bleed.
 
-    private static final int   SILENCE_HOLD_MS  = 400;               // ms of quiet to end utterance
+    /** Quiet needed to end an utterance. Default 1200 ms so a pause between words does not cut a command
+     *  off; {@code VoiceSilenceHoldMs} (300-3000) overrides it. Read live, so no restart needed. */
+    private static final int   DEFAULT_SILENCE_HOLD_MS = 1200;
+    private static int silenceHoldMs()
+    {
+        try
+        {
+            final String v = com.group_finity.mascot.Main.getInstance().getProperties()
+                .getProperty( "VoiceSilenceHoldMs", String.valueOf( DEFAULT_SILENCE_HOLD_MS ) );
+            return Math.max( 300, Math.min( 3000, Integer.parseInt( v.trim() ) ) );
+        }
+        catch( final Throwable t ) { return DEFAULT_SILENCE_HOLD_MS; }
+    }
     private static final int   MIN_SPEECH_BYTES =
         (int)( SAMPLE_RATE * 2 * 0.15 );                             // 150 ms minimum
     private static final int   MAX_CMD_BYTES    =
@@ -362,7 +374,7 @@ public class VoiceCommandListener
                     silenceStartMs = System.currentTimeMillis();
                     hadSilence     = true;
                 }
-                if( System.currentTimeMillis() - silenceStartMs >= SILENCE_HOLD_MS )
+                if( System.currentTimeMillis() - silenceStartMs >= silenceHoldMs() )
                     flushCmd();
             }
         }

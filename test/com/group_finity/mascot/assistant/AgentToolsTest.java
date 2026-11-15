@@ -3,6 +3,7 @@ package com.group_finity.mascot.assistant;
 import java.awt.Rectangle;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
@@ -338,6 +339,71 @@ public class AgentToolsTest
         eq( "confirmed move happened", true, Files.exists( mh.resolve( "Documents" ).resolve( "Report Final.pdf" ) ) );
         ft.handleNow( "[DO:undo]" );
         eq( "undo moves file back", true, Files.exists( mh.resolve( "Downloads" ).resolve( "Report Final.pdf" ) ) );
+
+        // ---- visible move (errand) ----
+        class FakeStage implements AgentErrand.Stage
+        {
+            final List<String> calls = new ArrayList<>();
+            boolean sourceOk = true;
+            Path heldSeen;
+            Path fromDir;
+            public void openFolders( final Path f, final Path t ) { calls.add( "open" ); fromDir = f; }
+            public boolean walkToSource() { calls.add( "toSource" ); return sourceOk; }
+            public void grab( final Path h ) { calls.add( "grab" ); heldSeen = h; }
+            public boolean walkToDest() { calls.add( "toDest" ); return true; }
+            public void drop() { calls.add( "drop" ); }
+            public void finish() { calls.add( "finish" ); }
+        }
+        Files.write( mh.resolve( "Downloads" ).resolve( "visible.txt" ), new byte[] { 7 } );
+        final FakeStage fs = new FakeStage();
+        final AgentTools vt = new AgentTools( mp, null, ( ti, m ) -> true, fsaid::add, mh.resolve( "j2.tsv" ), mh ).withStage( () -> fs );
+        vt.handleNow( "[DO:move|visible.txt|documents]" );
+        eq( "errand order", List.of( "open", "toSource", "grab", "toDest", "drop", "finish" ), fs.calls );
+        eq( "file was out of its folder while held", true, fs.heldSeen.toString().contains( AgentErrand.HOLD_DIR ) );
+        eq( "visible move arrived", true, Files.exists( mh.resolve( "Documents" ).resolve( "visible.txt" ) ) );
+        eq( "gone from source", false, Files.exists( mh.resolve( "Downloads" ).resolve( "visible.txt" ) ) );
+        eq( "hold folder cleaned up", false, Files.exists( mh.resolve( "Downloads" ).resolve( AgentErrand.HOLD_DIR ) ) );
+        eq( "holding record cleared", false, Files.exists( mh.resolve( "agent-holding.tsv" ) ) );
+        vt.handleNow( "[DO:undo]" );
+        eq( "undo after visible move", true, Files.exists( mh.resolve( "Downloads" ).resolve( "visible.txt" ) ) );
+
+        // mascot can't reach the folder: falls back to an instant move, nothing lost
+        final FakeStage fs2 = new FakeStage();
+        fs2.sourceOk = false;
+        final AgentTools vt2 = new AgentTools( mp, null, ( ti, m ) -> true, fsaid::add, mh.resolve( "j3.tsv" ), mh ).withStage( () -> fs2 );
+        vt2.handleNow( "[DO:move|visible.txt|documents]" );
+        eq( "fallback moved instantly", true, Files.exists( mh.resolve( "Documents" ).resolve( "visible.txt" ) ) );
+        eq( "fallback still finishes stage", true, fs2.calls.contains( "finish" ) );
+        Files.move( mh.resolve( "Documents" ).resolve( "visible.txt" ), mh.resolve( "Downloads" ).resolve( "visible.txt" ) );
+
+        // destination appears while the file is in the mascot's hands: put back, never overwritten
+        final FakeStage fs3 = new FakeStage()
+        {
+            @Override public void drop() { calls.add( "drop" ); try { Files.write( mh.resolve( "Documents" ).resolve( "visible.txt" ), new byte[] { 9 } ); } catch( final Exception e ) { } }
+        };
+        final AgentTools vt3 = new AgentTools( mp, null, ( ti, m ) -> true, fsaid::add, mh.resolve( "j4.tsv" ), mh ).withStage( () -> fs3 );
+        vt3.handleNow( "[DO:move|visible.txt|documents]" );
+        eq( "clash: original restored", true, Files.exists( mh.resolve( "Downloads" ).resolve( "visible.txt" ) ) );
+        eq( "clash: existing file untouched", 9, (int) Files.readAllBytes( mh.resolve( "Documents" ).resolve( "visible.txt" ) )[ 0 ] );
+        Files.delete( mh.resolve( "Documents" ).resolve( "visible.txt" ) );
+
+        // crash recovery
+        final Path hd = mh.resolve( "Downloads" ).resolve( AgentErrand.HOLD_DIR );
+        Files.createDirectories( hd );
+        Files.write( hd.resolve( "lost.txt" ), new byte[] { 1 } );
+        Files.write( mh.resolve( "agent-holding.tsv" ), ( hd.resolve( "lost.txt" ) + "\t" + mh.resolve( "Downloads" ).resolve( "lost.txt" ) + "\n" ).getBytes( "UTF-8" ) );
+        eq( "recover count", 1, AgentErrand.recover( mh.resolve( "agent-holding.tsv" ) ) );
+        eq( "recovered file back", true, Files.exists( mh.resolve( "Downloads" ).resolve( "lost.txt" ) ) );
+        // a tampered record pointing outside a hold folder is ignored
+        Files.write( mh.resolve( "Downloads" ).resolve( "innocent.txt" ), new byte[] { 1 } );
+        Files.write( mh.resolve( "agent-holding.tsv" ), ( mh.resolve( "Downloads" ).resolve( "innocent.txt" ) + "\t" + mh.resolve( "Documents" ).resolve( "x.txt" ) + "\n" ).getBytes( "UTF-8" ) );
+        eq( "tampered record ignored", 0, AgentErrand.recover( mh.resolve( "agent-holding.tsv" ) ) );
+        eq( "innocent file untouched", true, Files.exists( mh.resolve( "Downloads" ).resolve( "innocent.txt" ) ) );
+
+        // finding the Explorer window for a folder
+        final List<WindowControl.Info> ew = List.of( w( "Downloads - Mozilla Firefox" ), w( "Documents - File Explorer" ), w( "Documents" ) );
+        eq( "explorer window found", "Documents - File Explorer", AgentErrandStage.findFolderWindow( ew, Paths.get( "C:/Users/ko/Documents" ), new java.util.HashSet<>(), false ).title );
+        eq( "browser tab is not a folder", null, AgentErrandStage.findFolderWindow( List.of( w( "Downloads - Mozilla Firefox" ) ), Paths.get( "C:/Users/ko/Downloads" ), new java.util.HashSet<>(), false ) );
 
         // ---- confirm bubble fade ----
         eq( "solid early", 1f, AgentConfirmBubble.opacityFor( 20000 ) );

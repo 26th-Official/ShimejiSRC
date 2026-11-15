@@ -48,6 +48,20 @@ public final class AgentTools
     private final Path home;
     private java.util.function.Supplier<java.awt.Rectangle> mascotBounds = null;
     private java.util.function.Supplier<String> activeTitle = () -> "";
+    private java.util.function.Supplier<AgentErrand.Stage> stage = null;
+    private static volatile boolean recovered = false;
+
+    /** Show file moves as a walk-through (null/off = instant). */
+    public AgentTools withStage( final java.util.function.Supplier<AgentErrand.Stage> s ) { this.stage = s; return this; }
+
+    /** Once per run: put back any file left parked by a visible move that was interrupted by a crash. */
+    public static void startup( final Properties p )
+    {
+        if( recovered || !AgentPolicy.enabled( p ) ) return;
+        recovered = true;
+        final int n = AgentErrand.recover( Paths.get( "agent-holding.tsv" ) );
+        if( n > 0 ) log.warning( "[Agent] put back " + n + " file(s) left over from an interrupted move" );
+    }
 
     public AgentTools( final Properties props, final WindowControl windows, final Confirmer confirmer,
                        final Reporter reporter, final Path journal, final Path home )
@@ -73,7 +87,16 @@ public final class AgentTools
                 if( b != null ) b.showSay( text, host.getBounds() );
             } ),
             Paths.get( "agent-journal.tsv" ), Paths.get( System.getProperty( "user.home" ) ) )
-            .withHost( host::getBounds, host::lastActiveWindowTitle );
+            .withHost( host::getBounds, host::lastActiveWindowTitle )
+            .withStage( visualMoves( p, host ) );
+    }
+
+    private static java.util.function.Supplier<AgentErrand.Stage> visualMoves( final Properties p, final AssistantHost host )
+    {
+        if( p == null || !AgentPolicy.enabled( p ) || java.awt.GraphicsEnvironment.isHeadless()
+            || "false".equalsIgnoreCase( p.getProperty( "AgentVisualMoves", "true" ).trim() ) ) return null;
+        final WindowControl wc = WindowControl.get();
+        return wc == null ? null : () -> new AgentErrandStage( host, wc );
     }
 
     /** Mascot geometry and "the window the user was on when they spoke to me" (for "this window"). */
@@ -310,6 +333,13 @@ public final class AgentTools
         if( p.move == null ) { reporter.say( p.error ); return; }
         final String msg = "Move " + p.move.from.getFileName() + "\nfrom " + p.move.from.getParent().getFileName() + " to " + p.move.category + "?";
         if( !confirmer.confirm( "Move this file?", msg ) ) { reporter.say( "Okay, I left it where it is." ); return; }
+        if( stage != null )
+        {
+            final AgentErrand.Outcome o = AgentErrand.run( stage.get(), p.move, journal, journal.resolveSibling( "agent-holding.tsv" ) );
+            if( o == AgentErrand.Outcome.DONE ) { reporter.say( "Done. Say \"undo\" to put it back." ); return; }
+            if( o == AgentErrand.Outcome.CLASH ) { reporter.say( p.move.category + " already has a file with that name now, so I put it back." ); return; }
+            // NOT_STAGED: the mascot couldn't make the trip; just do the move
+        }
         final int n = FileOrganizer.execute( java.util.Collections.singletonList( p.move ), journal );
         reporter.say( n == 1 ? "Moved. Say \"undo\" to put it back." : "That didn't work; the file may be in use." );
     }

@@ -76,6 +76,18 @@ public final class FileOrganizer
         return out;
     }
 
+    /** Record one finished move so {@link #undoLast} can reverse it (used when a move was done another way). */
+    public static void journalMove( final Path from, final Path to, final Path journal ) throws IOException
+    {
+        journalMove( Long.toString( System.currentTimeMillis() ), from, to, journal );
+    }
+
+    private static void journalMove( final String batch, final Path from, final Path to, final Path journal ) throws IOException
+    {
+        Files.write( journal, ( batch + "\t" + from + "\t" + to + "\n" ).getBytes( StandardCharsets.UTF_8 ),
+            java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND );
+    }
+
     /** Execute a plan, journalling each success. Returns the number moved. */
     public static int execute( final List<Move> moves, final Path journal ) throws IOException
     {
@@ -88,8 +100,7 @@ public final class FileOrganizer
                 Files.createDirectories( m.to.getParent() );
                 if( Files.exists( m.to ) ) continue; // never overwrite
                 Files.move( m.from, m.to );          // no REPLACE_EXISTING
-                Files.write( journal, ( batch + "\t" + m.from + "\t" + m.to + "\n" ).getBytes( StandardCharsets.UTF_8 ),
-                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND );
+                journalMove( batch, m.from, m.to, journal );
                 done++;
             }
             catch( final IOException e ) { /* locked or vanished: skip it, keep going */ }
