@@ -32,11 +32,16 @@ if (Test-Path $out) { Remove-Item $out -Recurse -Force }
 New-Item -ItemType Directory -Path $out | Out-Null
 
 function Copy-Tree($src, $dst, [string[]]$xf = @(), [string[]]$xd = @()) {
-    $rc = @($src, $dst, "/E", "/NFL", "/NDL", "/NJH", "/NJS", "/NP")
+    # /XJ skips junctions/symlink loops, /R:2 /W:1 keeps a locked file from stalling the build.
+    $rc = @($src, $dst, "/E", "/XJ", "/R:2", "/W:1", "/NP", "/NDL", "/NJH")
     if ($xf.Count) { $rc += "/XF"; $rc += $xf }
     if ($xd.Count) { $rc += "/XD"; $rc += $xd }
-    & robocopy @args | Out-Null
-    if ($LASTEXITCODE -ge 8) { throw "robocopy failed copying $src" }
+    $log = & robocopy @rc
+    $code = $LASTEXITCODE
+    if ($code -ge 8) {
+        $log | Select-Object -Last 25 | ForEach-Object { Write-Host "  robocopy: $_" }
+        throw "robocopy failed copying $src (exit code $code)"
+    }
 }
 $scrubFiles = @("memory.json", "memory.json.bak", "*.bak", "*.log", "*.log.*", "chat.log", "relationship_journal.txt", "driveindex.txt", "driveembed.txt", "claude history.txt", "*- Copy*", "Thumbs.db", "desktop.ini")
 
@@ -44,7 +49,11 @@ $scrubFiles = @("memory.json", "memory.json.bak", "*.bak", "*.log", "*.log.*", "
 $required = @("Shimeji.exe", "Shimeji-ee.jar")
 $optional = @("TempSensor.exe", "whisper_server.py", "whisper_prompt.txt", "Setup.bat", "Admin.bat", "Debug.bat", "shimeji-video-tracker.xpi", "README.txt")
 foreach ($f in $required) { if (-not (Test-Path (Join-Path $InstallDir $f))) { throw "Missing required file in install folder: $f (run Build.bat -> [1] Release first)" } Copy-Item (Join-Path $InstallDir $f) $out }
-foreach ($f in $optional) { $p = Join-Path $InstallDir $f; if (Test-Path $p) { Copy-Item $p $out } else { Write-Warning "Not found (skipped): $f" } }
+foreach ($f in $optional) {
+    $p = Join-Path $InstallDir $f
+    if (-not (Test-Path $p)) { $p = Join-Path $repo $f }   # fall back to the repo copy (e.g. the browser .xpi)
+    if (Test-Path $p) { Copy-Item $p $out } else { Write-Warning "Not found (skipped): $f" }
+}
 Get-ChildItem $InstallDir -Filter *.dll -File | ForEach-Object { Copy-Item $_.FullName $out }   # MinGW runtime DLLs
 
 # --- allowlist: folders ---------------------------------------------------------------------------
