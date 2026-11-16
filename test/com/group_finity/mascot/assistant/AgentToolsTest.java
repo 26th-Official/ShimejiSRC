@@ -514,6 +514,47 @@ public class AgentToolsTest
         eq( "typer cap", AgentTyper.MAX_CHARS, AgentTyper.sanitize( "x".repeat( 900 ) ).length() );
         eq( "typer headless false", false, AgentTyper.typeLine( "hi" ) );
 
+
+        // ---- system controls ----
+        eq( "vol down", "volume_down", AgentIntent.parse( "can you turn down the volume" ).get( 0 )[ 1 ] );
+        eq( "vol down amount", "5", AgentIntent.parse( "can you turn down the volume" ).get( 0 )[ 2 ] );
+        eq( "vol down bit", "3", AgentIntent.parse( "turn the volume down a bit" ).get( 0 )[ 2 ] );
+        eq( "quieter", "volume_down", AgentIntent.parse( "make it quieter" ).get( 0 )[ 1 ] );
+        eq( "vol up", "volume_up", AgentIntent.parse( "turn up the volume" ).get( 0 )[ 1 ] );
+        eq( "louder", "volume_up", AgentIntent.parse( "louder please" ).get( 0 )[ 1 ] );
+        eq( "crank", "15", AgentIntent.parse( "crank the volume up" ).get( 0 )[ 2 ] );
+        eq( "set vol", "30", AgentIntent.parse( "set the volume to 30%" ).get( 0 )[ 2 ] );
+        eq( "set vol cap", "100", AgentIntent.parse( "volume to 400" ).get( 0 )[ 2 ] );
+        eq( "mute", "mute", AgentIntent.parse( "mute" ).get( 0 )[ 1 ] );
+        eq( "mute sound", "mute", AgentIntent.parse( "turn off the sound" ).get( 0 )[ 1 ] );
+        eq( "pause music", "playpause", AgentIntent.parse( "pause the music" ).get( 0 )[ 1 ] );
+        eq( "skip song", "next", AgentIntent.parse( "skip this song" ).get( 0 )[ 1 ] );
+        eq( "previous", "previous", AgentIntent.parse( "go back to the previous song" ).get( 0 )[ 1 ] );
+        for( final String bad : new String[] { "shut down my computer", "restart the pc", "close chrome", "delete all my files", "uninstall steam", "put the computer to sleep", "turn off my laptop", "log off", "kill the process" } )
+            eq( "refused: " + bad, "refuse", AgentIntent.parse( bad ).isEmpty() ? "NONE" : AgentIntent.parse( bad ).get( 0 )[ 0 ] );
+        for( final String ok : new String[] { "close enough", "I'm going to quit smoking", "kill time with me", "what's the volume of a sphere", "the music is great", "how are you" } )
+            eq( "not an action: " + ok, 0, AgentIntent.parse( ok ).size() );
+        final List<String> keys = new ArrayList<>();
+        final List<String> ysaid = new ArrayList<>();
+        final AgentTools yt = new AgentTools( sp, tw, ( x, y ) -> true, ysaid::add, sh.resolve( "j.tsv" ), sh )
+            .withSystem( k -> keys.add( k.name() ) ).withKeyPause( 0 );
+        yt.run( new String[] { "sys", "volume_down", "5" } );
+        eq( "5 presses", 5, keys.size() );
+        eq( "down key", "VOLUME_DOWN", keys.get( 0 ) );
+        keys.clear();
+        yt.run( new String[] { "sys", "volume_set", "30" } );
+        eq( "set = 50 down + 15 up", 65, keys.size() );
+        eq( "set ends up", "VOLUME_UP", keys.get( 64 ) );
+        keys.clear();
+        yt.run( new String[] { "sys", "volume_up", "9999" } );
+        eq( "press count capped", 25, keys.size() );
+        yt.run( new String[] { "refuse" } );
+        eq( "exact refusal", "This action is not within my parameters.", ysaid.get( ysaid.size() - 1 ) );
+        keys.clear();
+        yt.handleNow( "[DO:sys|shutdown]" );
+        eq( "unknown sys action refused", "This action is not within my parameters.", ysaid.get( ysaid.size() - 1 ) );
+        eq( "no key for unknown", 0, keys.size() );
+
         System.out.println( fails == 0 ? "AgentToolsTest: all passed" : "AgentToolsTest: " + fails + " FAILED" );
         if( fails > 0 ) System.exit( 1 );
     }

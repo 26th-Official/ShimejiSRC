@@ -107,6 +107,51 @@ public final class AgentIntent
         return null;
     }
 
+
+    // system controls: volume and media keys only; anything destructive is refused in the mascot's own words
+    private static final String VOL = "(?:the\\s+|my\\s+)?(?:volume|sound|audio|music|speakers?|playback)";
+    private static final Pattern VOL_DOWN = Pattern.compile( "^(?:(?:turn|bring|put|lower|drop|reduce|decrease|take)\\s+(?:down\\s+)?" + VOL + "(?:\\s+(?:down|lower|a (?:bit|little|lot|notch)|a bit lower))?|(?:turn|bring)\\s+(?:it|that)\\s+(?:down|lower)|make\\s+(?:it|that|things?)\\s+(?:quieter|softer|lower)|quieter|too loud|it'?s too loud|(?:turn|bring) down|volume down)(.*)$" );
+    private static final Pattern VOL_UP = Pattern.compile( "^(?:(?:turn|bring|put|raise|pump|crank|increase|bump|take)\\s+(?:up\\s+)?" + VOL + "(?:\\s+(?:up|higher|a (?:bit|little|lot|notch)|a bit louder))?|(?:turn|bring|put|crank|bump)\\s+(?:it|that)\\s+(?:up|higher)|make\\s+(?:it|that|things?)\\s+(?:louder|higher)|louder|too quiet|it'?s too quiet|(?:turn|bring) up|volume up)(.*)$" );
+    private static final Pattern VOL_SET = Pattern.compile( "^(?:set|put|turn|change|make)\\s+" + VOL + "\\s+(?:to|at)\\s+(\\d{1,3})\\s*(?:%|percent)?$|^" + VOL + "\\s+(?:to|at)\\s+(\\d{1,3})\\s*(?:%|percent)?$" );
+    private static final Pattern MUTE = Pattern.compile( "^(?:mute|unmute|toggle mute|silence)(?:\\s+" + VOL + "|\\s+(?:it|this|everything|my computer|the computer|my pc))?$|^(?:turn off|shut off)\\s+" + VOL + "$|^(?:turn|bring)\\s+" + VOL + "\\s+off$" );
+    private static final Pattern MEDIA = Pattern.compile( "^(?:(pause|stop|resume|unpause|play|continue)(?:\\s+(?:the|my|this|that))?\\s+(?:music|song|songs|video|media|track|playback|audio|podcast|youtube|spotify)|(?:skip|next)(?:\\s+(?:to|the))?(?:\\s+(?:this|that|the next|next))?\\s*(?:song|track|video)?|(?:go\\s+)?(?:back|previous|last)(?:\\s+(?:to the|the))?(?:\\s+(?:previous|last))?\\s*(?:song|track)|(pause|resume)(?:\\s+it)?|(play|pause)\\s+(?:something)?)$" );
+    private static final String THING = ".*\\b(?:files?|folders?|computer|pc|laptop|system|drive|disk|process(?:es)?|programs?|apps?|applications?|windows?|tabs?|browser|chrome|firefox|edge|discord|steam|everything|downloads?|documents?|recycle|bin|registry|password|firewall|antivirus|defender)\\b.*";
+    private static final Pattern REFUSE = Pattern.compile(
+        "^(?:shut\\s*down|power\\s*off|power down|reboot|hibernate|log\\s*off|sign\\s*out|log me out)\\b.*$"
+        + "|^(?:restart|sleep|turn off|switch off|put)\\b" + THING + "$"
+        + "|^(?:format|wipe|erase|uninstall|install|kill|terminate|force quit|force close|close|quit|exit|delete|remove|trash|destroy|empty|change|reset|disable)\\b" + THING + "$" );
+
+
+    /** Volume / media keys, or a refusal for destructive system requests; null when the text is neither. */
+    static List<String[]> parseSystem( final String t )
+    {
+        Matcher m;
+        if( ( m = VOL_SET.matcher( t ) ).matches() )
+        {
+            final String n = m.group( 1 ) != null ? m.group( 1 ) : m.group( 2 );
+            return one( "sys", "volume_set", Integer.toString( Math.min( 100, Integer.parseInt( n ) ) ) );
+        }
+        if( MUTE.matcher( t ).matches() ) return one( "sys", "mute" );
+        boolean down = ( m = VOL_DOWN.matcher( t ) ).matches();
+        boolean up = !down && ( m = VOL_UP.matcher( t ) ).matches();
+        if( down || up )
+        {
+            final String tail = m.group( m.groupCount() ).toLowerCase( Locale.ROOT );
+            final String amount = tail.contains( "lot" ) || tail.contains( "way" ) || t.contains( "crank" ) ? "15"
+                : tail.contains( "bit" ) || tail.contains( "little" ) || tail.contains( "notch" ) || t.contains( "a bit" ) || t.contains( "a little" ) || t.contains( "notch" ) ? "3" : "5";
+            return one( "sys", down ? "volume_down" : "volume_up", amount );
+        }
+        if( ( m = MEDIA.matcher( t ) ).matches() )
+        {
+            if( t.contains( "skip" ) || t.startsWith( "next" ) ) return one( "sys", "next" );
+            if( t.contains( "back" ) || t.contains( "previous" ) || t.contains( "last" ) ) return one( "sys", "previous" );
+            return one( "sys", "playpause" );
+        }
+        if( REFUSE.matcher( t ).matches() && !t.matches( "^(?:put|turn off|switch off)\\b.*(?:window|sound|volume|music|audio).*" ) && !t.startsWith( "put " ) ) return one( "refuse" );
+        if( t.matches( "^put\\s+(?:the\\s+|my\\s+)?(?:computer|pc|laptop|machine)\\s+(?:to sleep|in sleep mode|into sleep).*$" ) ) return one( "refuse" );
+        return null;
+    }
+
     private static List<String[]> one( final String... tag ) { return java.util.Collections.singletonList( tag ); }
 
     /** Tags implied by what the user said, or an empty list. */
@@ -125,6 +170,10 @@ public final class AgentIntent
         t = t.replaceAll( "[.!?,]+$", "" ).replaceAll( "^(?:(?:hey|ok|okay|please|can you|could you|would you|will you|go ahead and|just)[ ,]+)+", "" )
              .replaceAll( "\\s+please$", "" ).replaceAll( "\\s+", " " ).trim();
         Matcher m;
+        {
+            final List<String[]> sys = parseSystem( t );
+            if( sys != null ) return sys;
+        }
         if( DROP.matcher( t ).matches() ) { out.add( new String[] { "drop" } ); return out; }
         if( wantsCarry( t ) )
         {

@@ -63,6 +63,8 @@ public interface User32 extends StdCallLibrary{
 
 	boolean SetForegroundWindow(Pointer hWnd);
 
+	void keybd_event(byte bVk, byte bScan, int dwFlags, Pointer dwExtraInfo);
+
 	int GetWindowThreadProcessId(Pointer hWnd, int[] lpdwProcessId);
 
 	int WS_EX_TOOLWINDOW = 0x00000080;
