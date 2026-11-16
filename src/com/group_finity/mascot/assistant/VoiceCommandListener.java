@@ -89,9 +89,9 @@ public class VoiceCommandListener
     // buffer. When silence persists for VoiceSilenceHoldMs after speech, the
     // segment is immediately sent to Whisper — no poll wait, no video bleed.
 
-    /** Quiet needed to end an utterance. Default 1200 ms so a pause between words does not cut a command
+    /** Quiet needed to end an utterance. Default 1500 ms so a pause between words does not cut a command
      *  off; {@code VoiceSilenceHoldMs} (300-3000) overrides it. Read live, so no restart needed. */
-    private static final int   DEFAULT_SILENCE_HOLD_MS = 1200;
+    private static final int   DEFAULT_SILENCE_HOLD_MS = 1500;
     private static int silenceHoldMs()
     {
         try
@@ -102,10 +102,11 @@ public class VoiceCommandListener
         }
         catch( final Throwable t ) { return DEFAULT_SILENCE_HOLD_MS; }
     }
+    private static final int   PREROLL_BYTES = (int)( SAMPLE_RATE * 2 * 0.6 );   // 600 ms kept from before speech onset
     private static final int   MIN_SPEECH_BYTES =
         (int)( SAMPLE_RATE * 2 * 0.15 );                             // 150 ms minimum
     private static final int   MAX_CMD_BYTES    =
-        (int)( SAMPLE_RATE * 2 * 8.0 );                              // 8 s hard cap
+        (int)( SAMPLE_RATE * 2 * 12.0 );                             // 12 s hard cap (a spoken command can be long)
     private static final float SPEECH_MULT      = 3.5f;   // threshold = ambient * this
     private static final int   MIN_THRESHOLD    = 400;    // floor even in total silence
     private static final float AMBIENT_ALPHA    = 0.008f; // noise floor tracking (~16s time constant)
@@ -119,7 +120,7 @@ public class VoiceCommandListener
     // window and easier for Whisper to extract from the mixed signal.
     private static final int   AUDIO_PLAYING_SYS_RMS = 300;
     private static final int   MAX_CMD_BYTES_AUDIO =
-        (int)( SAMPLE_RATE * 2 * 3.0 );                          // 3 s cap when audio plays
+        (int)( SAMPLE_RATE * 2 * 7.0 );                          // 7 s cap when audio plays (3 s cut commands off mid-sentence)
 
     /** Adaptive ambient noise floor estimate (RMS units). Updated when not in speech. */
     private float   ambientRms    = 300f;
@@ -142,7 +143,7 @@ public class VoiceCommandListener
 
     // Relative-silence fraction: RMS must fall below this fraction of the utterance
     // peak (and peak must be >= 1.2x threshold) to count as within-speech silence.
-    private static final float RELATIVE_SILENCE_FRAC = 0.70f;
+    private static final float RELATIVE_SILENCE_FRAC = 0.40f;
     // max/min RMS ratio below which a full-cap no-silence segment is pure noise.
     private static final float NOISE_VARIANCE_RATIO   = 1.4f;
 
@@ -336,7 +337,8 @@ public class VoiceCommandListener
         // above threshold so a fan just barely over the threshold doesn't trigger this.
         final boolean relSilent = inSpeech
             && inSpeechMaxRms > (int)( threshold * 1.2f )
-            && rms < (int)( inSpeechMaxRms * RELATIVE_SILENCE_FRAC );
+            && rms < (int)( inSpeechMaxRms * RELATIVE_SILENCE_FRAC )
+            && rms < (int)( threshold * 1.8f );     // quiet speech is not silence: must also be near the noise floor
 
         if( rms >= threshold && !relSilent )
         {
@@ -345,6 +347,11 @@ public class VoiceCommandListener
                 inSpeech       = true;
                 cmdBuf         = new byte[ MAX_CMD_BYTES ];
                 cmdLen         = 0;
+                // Pre-roll: the onset threshold clips the quiet start of a phrase ("hey"), so
+                // start the segment with the audio from just before this chunk.
+                final byte[] pre = recentBeforeLatest( PREROLL_BYTES, len );
+                System.arraycopy( pre, 0, cmdBuf, 0, pre.length );
+                cmdLen = pre.length;
                 silenceStartMs = 0;
                 hadSilence     = false;
                 inSpeechMaxRms = rms;
@@ -377,6 +384,23 @@ public class VoiceCommandListener
                 if( System.currentTimeMillis() - silenceStartMs >= silenceHoldMs() )
                     flushCmd();
             }
+        }
+    }
+
+    /** Audio that came just before the newest {@code latestLen} bytes written to the ring (up to {@code want} bytes). */
+    private byte[] recentBeforeLatest( final int want, final int latestLen )
+    {
+        synchronized( ring )
+        {
+            final int n = Math.max( 0, Math.min( want, filled - latestLen ) );
+            final byte[] out = new byte[ n ];
+            int pos = ( writePos - latestLen - n + 2 * BUFFER_BYTES ) % BUFFER_BYTES;
+            for( int i = 0; i < n; i++ )
+            {
+                out[ i ] = ring[ pos ];
+                pos = ( pos + 1 ) % BUFFER_BYTES;
+            }
+            return out;
         }
     }
 
