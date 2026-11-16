@@ -153,4 +153,4 @@ XML-driven behaviors (`conf/actions.xml`, `conf/behaviors.xml`, per-mascot overr
 
 ## Lineage & license
 
-Fork of Shimeji-ee (Group Finity / Shimeji-ee Group / kilkakon), itself descended from Group Finity's original Shimeji. Full credit to the original authors. The original Shimeji-ee manual is preserved in the repo as `readme.txt` (detailed configuration and customization docs); original licenses are retained in `licence.txt`, `originallicence.txt`, and `originalreadme.txt`.
+Fork of Shimeji-ee (Group Finity / Shimeji-ee Group / kilkakon), itself descended from Group Finity's original Shimeji. Full credit to the original authors - see [`CREDITS.md`](CREDITS.md) for everyone and everything this builds on. The original Shimeji-ee manual is preserved in the repo as `readme.txt` (detailed configuration and customization docs); original licenses are retained in `licence.txt`, `originallicence.txt`, and `originalreadme.txt`.

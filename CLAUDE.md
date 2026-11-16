@@ -19,7 +19,7 @@ A heavily modified fork of Shimeji-ee (Java/Windows desktop mascot app) with an 
 
 ## Build Commands
 
-1. Run `Build.bat` (repo root; the install folder has a `Build.lnk` shortcut to it) → [1] Release, [2] Test, [3] Ant only
+1. Run `Build.bat` (repo root; the install folder has a `Build.lnk` shortcut to it) → [1] Release, [2] Test (both need `Build.local.bat` Launch4j configs), [3] Ant only, [4] Portable (any machine: auto-finds/downloads Launch4j into gitignored `tools\`, generates the Launch4j config, outputs `dist\ShimejiSRC\Shimeji.exe`; written without Windows access, so fix the script if it errors). Default choice is 2 when Build.local.bat sets the Launch4j paths, else 4
 2. Bat calls `ant jar` in source folder, then wraps with Launch4j
 
 `Build.bat` lives ONLY at the repo root (version-controlled); the install folder holds just a shortcut, so there is one copy to edit. **Machine-specific paths (`INSTALL_DIR`, `LAUNCH4J`, `CONFIG_RELEASE`, `CONFIG_TEST`, optional `WORKSPACE`) live in the gitignored `Build.local.bat`** (template: `Build.local.bat.example`); `WORKSPACE` defaults to the script's own folder, and without `LAUNCH4J` the script stops after `ant jar`. The script uses `INSTALL_DIR` (not `%~dp0`) to launch the built exe, since `%~dp0` resolves to the repo, not the install folder. Keep it ASCII (no BOM) with CRLF (`.gitattributes` forces `*.bat` to CRLF on checkout): a UTF-8 BOM silently breaks `@echo off` and makes cmd echo every line (happened June 2026).
