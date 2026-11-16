@@ -54,6 +54,12 @@ public interface WindowControl
     /** Move and resize the window to {@code r}. False if it is gone. */
     default boolean place( final Info window, final Rectangle r ) { return moveTo( window, r.x, r.y ); }
 
+    /** Bring the window to the front and give it keyboard focus. False if refused. */
+    default boolean foreground( final Info window ) { return apply( window, Op.FOCUS ); }
+
+    /** Title of the window that has keyboard focus now, or null. */
+    default String foregroundTitle() { return null; }
+
     /** The backend for this platform, or null when there is none. */
     static WindowControl get()
     {

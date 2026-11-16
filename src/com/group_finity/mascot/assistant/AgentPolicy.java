@@ -27,6 +27,12 @@ public final class AgentPolicy
         return !halted && p != null && "true".equalsIgnoreCase( p.getProperty( "AgentEnabled", "false" ).trim() );
     }
 
+    /** Typing into other apps (scheduled "ask X to ..."): a second opt-in on top of AgentEnabled. */
+    public static boolean typeEnabled( final Properties p )
+    {
+        return enabled( p ) && "true".equalsIgnoreCase( p.getProperty( "AgentTypeEnabled", "false" ).trim() );
+    }
+
     /** Folders the agent may organize: semicolon-separated; bare names resolve under the user's home. */
     public static List<Path> allowedFolders( final Properties p, final Path home )
     {

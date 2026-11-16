@@ -141,7 +141,7 @@ public final class AssistantInput
                 @Override
                 public void onResponse( final String raw )
                 {
-                    new AssistantActions( m ).fireActionFromResponse( raw );
+                    new AssistantActions( m ).fireActionFromResponse( AgentTools.forHost( m ).withoutTimerIfScheduled( userText, raw ) );
                     AgentTools.forHost( m ).handleUser( userText, raw ); // direct replies to the user only
                     final String display = new AssistantPrompts( m ).applyPersonaRewrites( polishUtterance( stripActionTag( sanitizeResponse( raw ) ) ) );
                     com.group_finity.mascot.assistant.ChatLog.append( mascotName, display );
@@ -264,7 +264,7 @@ public final class AssistantInput
                         @Override
                         public void onResponse( final String raw )
                         {
-                            new AssistantActions( m ).fireActionFromResponse( raw );
+                            new AssistantActions( m ).fireActionFromResponse( AgentTools.forHost( m ).withoutTimerIfScheduled( userText, raw ) );
                     AgentTools.forHost( m ).handleUser( userText, raw ); // direct replies to the user only
                             final String display = new AssistantPrompts( m ).applyPersonaRewrites( polishUtterance( stripActionTag( sanitizeResponse( raw ) ) ) );
                             com.group_finity.mascot.assistant.ChatLog.append( mascotName, display );
@@ -338,7 +338,7 @@ public final class AssistantInput
             {
                 @Override public void onResponse( final String raw )
                 {
-                    new AssistantActions( m ).fireActionFromResponse( raw );
+                    new AssistantActions( m ).fireActionFromResponse( AgentTools.forHost( m ).withoutTimerIfScheduled( userText, raw ) );
                     AgentTools.forHost( m ).handleUser( userText, raw ); // direct replies to the user only
                     final String text = new AssistantPrompts( m ).applyPersonaRewrites( polishUtterance( stripActionTag( sanitizeResponse( raw ) ) ) );
                     com.group_finity.mascot.assistant.ChatLog.append( mascotName, text );

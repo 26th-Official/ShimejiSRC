@@ -1318,6 +1318,7 @@ public class AssistantBubble
         timerActive           = false;
         countdownTicker       = null;
         if( timerMsg == null ) return;
+        AgentSound.chime();
         timerMsg.displayText  = reminder;
         timerMsg.timerFired   = true;
         timerMsg.alpha        = 1.0f;

@@ -58,11 +58,69 @@ public final class AgentIntent
     private static final Pattern DROP = Pattern.compile(
         "^(?:(?:ok(?:ay)?\\s+)?(?:drop|release|put down|set down|let go of|let go|stop carrying)(?:\\s+(?:it|that|them|the window|this window|my window|the app))?(?:\\s+down)?|put (?:it|that|the window|this window|my window) down|that'?s enough|you can put (?:it|that) down)$" );
 
+    private static final Pattern FILLER = Pattern.compile( "^(?:(?:hey|ok|okay|please|can you|could you|would you|will you|go ahead and|just)[ ,]+)+", Pattern.CASE_INSENSITIVE );
+
+    private static final Pattern S_SOUND = Pattern.compile( "^(?:play|make|ring|sound)\\s+(?:me\\s+)?(?:a\\s+|an\\s+|the\\s+)?(?:sound|chime|alarm|beep|ding|noise|bell|tone)(?:\\s+(?:for|to|saying)\\s+(.+))?$", Pattern.CASE_INSENSITIVE );
+    private static final Pattern S_ALARM = Pattern.compile( "^(?:set|start|make|create)\\s+(?:me\\s+)?(?:a\\s+|an\\s+)?(?:alarm|timer)(?:\\s+(?:for|to|called|named)\\s+(.+))?$", Pattern.CASE_INSENSITIVE );
+    private static final Pattern S_WAKE = Pattern.compile( "^wake me(?:\\s+up)?$", Pattern.CASE_INSENSITIVE );
+    private static final Pattern S_REMIND = Pattern.compile( "^remind me\\s+(?:to\\s+|about\\s+|that\\s+|of\\s+)?(.+)$", Pattern.CASE_INSENSITIVE );
+    private static final Pattern S_TYPE_A = Pattern.compile( "^(?:ask|tell|have|get)\\s+(.+?)\\s+to\\s+(.+)$", Pattern.CASE_INSENSITIVE );
+    private static final Pattern S_TYPE_B = Pattern.compile( "^(?:type|send|say)\\s+(.+?)\\s+(?:to|in|into)\\s+(?:the\\s+|my\\s+)?(.+)$", Pattern.CASE_INSENSITIVE );
+    private static final Pattern S_OPEN = Pattern.compile( "^(?:open|launch|start|run|pull up|bring up|go to|visit|load)\\s+(.+)$", Pattern.CASE_INSENSITIVE );
+    private static final Pattern S_CAL1 = Pattern.compile( "^(?:add|put|schedule|create|set up|make|book)\\s+(?:an?\\s+)?(?:(?:calendar\\s+)?(?:event|appointment|meeting|entry)|calendar\\s+entry)\\s*(?:called|named|titled|for|about|to|:)?\\s*(.*)$", Pattern.CASE_INSENSITIVE );
+    private static final Pattern S_CAL2 = Pattern.compile( "^(?:add|put)\\s+(.+?)\\s+(?:on|to|in)\\s+(?:my\\s+)?calendar$", Pattern.CASE_INSENSITIVE );
+    private static final Pattern S_CAL3 = Pattern.compile( "^schedule\\s+(?:a\\s+|an\\s+)?(.+)$", Pattern.CASE_INSENSITIVE );
+    private static final Pattern AGENDA = Pattern.compile(
+        "^(?:what(?:'s| is| do you have| have you got| do i have)?\\s+)?(?:scheduled|(?:my\\s+)?(?:schedule|reminders|timers|alarms|agenda))(?:\\s+for me)?$"
+        + "|^(?:show|list|what are)\\s+(?:me\\s+)?(?:my\\s+|the\\s+)?(?:schedule|reminders|timers|alarms|scheduled\\s+\\w+)$", Pattern.CASE_INSENSITIVE );
+    private static final Pattern CANCEL = Pattern.compile(
+        "^(?:cancel|clear|delete|remove|forget|stop)\\s+(all\\s+)?(?:my\\s+|the\\s+|that\\s+|those\\s+)?(all\\s+)?(reminders?|timers?|alarms?|schedule|scheduled\\s*\\w*|that|it|everything|last one)(?:\\s+(?:for|about|to)\\s+(.+))?$", Pattern.CASE_INSENSITIVE );
+
+    /** Schedule / calendar / agenda / cancel commands; null when the text is none of those. */
+    static List<String[]> parseSchedule( final String text, final long now, final java.time.ZoneId zone )
+    {
+        final String o = FILLER.matcher( text.trim().replaceAll( "[.!?,]+$", "" ) ).replaceAll( "" ).replaceAll( "(?i)\\s+please$", "" ).replaceAll( "\\s+", " " ).trim();
+        Matcher m;
+        if( AGENDA.matcher( o ).matches() ) return java.util.Collections.singletonList( new String[] { "agenda" } );
+        if( ( m = CANCEL.matcher( o ) ).matches() )
+        {
+            final String what = m.group( 3 ).toLowerCase( Locale.ROOT ).trim(), about = m.group( 4 );
+            final String arg = about != null ? about.trim()
+                : m.group( 1 ) != null || m.group( 2 ) != null || what.equals( "everything" ) || what.endsWith( "s" ) || what.startsWith( "schedule" ) ? "all"
+                : "last";
+            return java.util.Collections.singletonList( new String[] { "unschedule", arg } );
+        }
+        final TimeParse.Result tr = TimeParse.parse( o, now, zone );
+        if( tr == null ) return null;
+        final String r = tr.rest.replaceAll( "[,;:]+$", "" ).trim();
+        final String at = Long.toString( tr.atMs );
+        if( ( m = S_SOUND.matcher( r ) ).matches() || ( m = S_ALARM.matcher( r ) ).matches() )
+            return one( "schedule", at, "sound", m.group( 1 ) == null ? "" : m.group( 1 ).trim(), "" );
+        if( S_WAKE.matcher( r ).matches() ) return one( "schedule", at, "sound", "Wake up!", "" );
+        if( ( m = S_REMIND.matcher( r ) ).matches() ) return one( "schedule", at, "remind", m.group( 1 ).trim(), "" );
+        if( ( m = S_CAL2.matcher( r ) ).matches() ) return one( "calendar", at, m.group( 1 ).trim() );
+        if( ( m = S_CAL1.matcher( r ) ).matches() ) return one( "calendar", at, m.group( 1 ).trim() );
+        if( ( m = S_TYPE_A.matcher( r ) ).matches() ) return one( "schedule", at, "type", clean( m.group( 1 ) ), m.group( 2 ).trim() );
+        if( ( m = S_TYPE_B.matcher( r ) ).matches() ) return one( "schedule", at, "type", clean( m.group( 2 ) ), m.group( 1 ).trim().replaceAll( "^[\"']|[\"']$", "" ) );
+        if( ( m = S_OPEN.matcher( r ) ).matches() ) return one( "schedule", at, "open", m.group( 1 ).trim(), "" );
+        if( ( m = S_CAL3.matcher( r ) ).matches() ) return one( "calendar", at, m.group( 1 ).trim() );
+        return null;
+    }
+
+    private static List<String[]> one( final String... tag ) { return java.util.Collections.singletonList( tag ); }
+
     /** Tags implied by what the user said, or an empty list. */
     public static List<String[]> parse( final String userText )
     {
+        return parse( userText, System.currentTimeMillis(), java.time.ZoneId.systemDefault() );
+    }
+
+    public static List<String[]> parse( final String userText, final long nowMs, final java.time.ZoneId zone )
+    {
         final List<String[]> out = new ArrayList<>();
         if( userText == null ) return out;
+        final List<String[]> sched = parseSchedule( userText, nowMs, zone );
+        if( sched != null ) return sched;
         String t = userText.toLowerCase( Locale.ROOT ).trim();
         t = t.replaceAll( "[.!?,]+$", "" ).replaceAll( "^(?:(?:hey|ok|okay|please|can you|could you|would you|will you|go ahead and|just)[ ,]+)+", "" )
              .replaceAll( "\\s+please$", "" ).replaceAll( "\\s+", " " ).trim();

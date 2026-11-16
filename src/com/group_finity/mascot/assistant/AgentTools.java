@@ -50,6 +50,20 @@ public final class AgentTools
     private java.util.function.Supplier<String> activeTitle = () -> "";
     private java.util.function.Supplier<AgentErrand.Stage> stage = null;
     private static volatile boolean recovered = false;
+    private AgentScheduler scheduler = null;
+    private Path calendarDir = null;
+    private java.util.function.BiConsumer<Long, String> countdown = null;
+    private java.util.function.LongSupplier clock = System::currentTimeMillis;
+    private static final java.util.Set<Long> counted = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** Scheduling: persistent store + where .ics files go + optional countdown bubble (end time, label). */
+    public AgentTools withScheduler( final AgentScheduler s, final Path calDir, final java.util.function.BiConsumer<Long, String> cd )
+    {
+        this.scheduler = s; this.calendarDir = calDir; this.countdown = cd;
+        return this;
+    }
+
+    AgentTools withClock( final java.util.function.LongSupplier c ) { this.clock = c; return this; }
 
     /** Show file moves as a walk-through (null/off = instant). */
     public AgentTools withStage( final java.util.function.Supplier<AgentErrand.Stage> s ) { this.stage = s; return this; }
@@ -88,7 +102,20 @@ public final class AgentTools
             } ),
             Paths.get( "agent-journal.tsv" ), Paths.get( System.getProperty( "user.home" ) ) )
             .withHost( host::getBounds, host::lastActiveWindowTitle )
-            .withStage( visualMoves( p, host ) );
+            .withStage( visualMoves( p, host ) )
+            .withScheduler( AgentScheduler.shared(), Paths.get( "agent-calendar" ),
+                ( endMs, label ) -> javax.swing.SwingUtilities.invokeLater( () ->
+                {
+                    final AssistantBubble tb = host.timerBubble();
+                    if( tb != null ) tb.showCountdown( endMs, label, host.getBounds() );
+                } ) );
+    }
+
+    /** Once per run: start the scheduler thread so due tasks fire even after a restart. Bound to the first mascot. */
+    public void bindScheduler()
+    {
+        if( !enabled() || scheduler == null ) return;
+        scheduler.start( this::fire );
     }
 
     private static java.util.function.Supplier<AgentErrand.Stage> visualMoves( final Properties p, final AssistantHost host )
@@ -108,6 +135,15 @@ public final class AgentTools
     }
 
     public boolean enabled() { return AgentPolicy.enabled( props ); }
+
+    /** When the agent will schedule what the user asked, drop the model's own [TIMER] tag so the timer isn't set twice. */
+    public String withoutTimerIfScheduled( final String userText, final String raw )
+    {
+        if( raw == null || userText == null || !enabled() ) return raw;
+        for( final String[] t : AgentIntent.parse( userText ) )
+            if( t[ 0 ].equals( "schedule" ) || t[ 0 ].equals( "calendar" ) ) return raw.replaceAll( "\\[TIMER:[^\\]]*\\]", "" );
+        return raw;
+    }
 
     // ── parsing ──────────────────────────────────────────────────────────────
 
@@ -153,12 +189,21 @@ public final class AgentTools
                 reporter.say( AgentPolicy.isHalted() ? "My agent tools are paused." : "My agent tools are off. Set AgentEnabled=true in settings.properties and restart me." );
             return;
         }
-        final List<String[]> todo = !intent.isEmpty() ? intent : parse( raw );
+        final List<String[]> todo = !intent.isEmpty() ? intent : modelSafe( parse( raw ) );
         if( todo.isEmpty() ) return;
         log.info( "[Agent] running " + todo.size() + " action(s) from " + ( intent.isEmpty() ? "model tags" : "the user's words" ) );
         final Thread th = new Thread( () -> runAll( todo ), "agent" );
         th.setDaemon( true );
         th.start();
+    }
+
+    /** Scheduling/typing is only ever built from the user's own words, never from a model tag. */
+    private static List<String[]> modelSafe( final List<String[]> in )
+    {
+        final List<String[]> out = new ArrayList<>();
+        for( final String[] t : in )
+            if( !( t[ 0 ].equals( "schedule" ) || t[ 0 ].equals( "calendar" ) || t[ 0 ].equals( "agenda" ) || t[ 0 ].equals( "unschedule" ) ) ) out.add( t );
+        return out;
     }
 
     private void runAll( final List<String[]> todo )
@@ -175,7 +220,7 @@ public final class AgentTools
     void handleNow( final String raw )
     {
         if( !enabled() ) return;
-        runAll( parse( raw ) );
+        runAll( modelSafe( parse( raw ) ) );
     }
 
     void run( final String[] t ) throws Exception
@@ -189,8 +234,170 @@ public final class AgentTools
             case "drop":     doDrop(); break;
             case "monitor":  doMonitor( t.length > 1 ? t[ 1 ] : "", t.length > 2 ? t[ 2 ] : "" ); break;
             case "move":     doMove( t.length > 1 ? t[ 1 ] : "", t.length > 2 ? t[ 2 ] : "" ); break;
+            case "schedule":   doSchedule( t ); break;
+            case "calendar":   doCalendar( t ); break;
+            case "agenda":     doAgenda(); break;
+            case "unschedule": doUnschedule( t.length > 1 ? t[ 1 ] : "last" ); break;
             default: log.info( "[Agent] unknown tool ignored: " + t[ 0 ] );
         }
+    }
+
+
+    // scheduling -------------------------------------------------------------------
+
+    private static final java.time.format.DateTimeFormatter WHEN = java.time.format.DateTimeFormatter.ofPattern( "EEE MMM d 'at' h:mm a", Locale.US );
+
+    static String whenText( final long atMs, final long nowMs )
+    {
+        final java.time.ZoneId z = java.time.ZoneId.systemDefault();
+        final java.time.ZonedDateTime t = java.time.Instant.ofEpochMilli( atMs ).atZone( z );
+        final java.time.LocalDate today = java.time.Instant.ofEpochMilli( nowMs ).atZone( z ).toLocalDate();
+        final String clock = t.format( java.time.format.DateTimeFormatter.ofPattern( "h:mm a", Locale.US ) );
+        if( t.toLocalDate().equals( today ) ) return "today at " + clock;
+        if( t.toLocalDate().equals( today.plusDays( 1 ) ) ) return "tomorrow at " + clock;
+        return t.format( WHEN );
+    }
+
+    private boolean typeEnabled() { return AgentPolicy.typeEnabled( props ); }
+
+    private void doSchedule( final String[] t ) throws Exception
+    {
+        if( scheduler == null ) { reporter.say( "I can't keep a schedule right now." ); return; }
+        final long at = Long.parseLong( t[ 1 ] );
+        final String kind = t[ 2 ], a = t.length > 3 ? t[ 3 ] : "", b = t.length > 4 ? t[ 4 ] : "";
+        final long now = clock.getAsLong();
+        if( at <= now ) { reporter.say( "That time has already passed." ); return; }
+        String what, a2 = a, b2 = b;
+        switch( kind )
+        {
+            case "sound":  what = a.isEmpty() ? "play a sound" : "play a sound (" + a + ")"; break;
+            case "remind": what = "remind you: " + a; break;
+            case "open":
+            {
+                final AgentOpen.Resolved r = AgentOpen.resolve( a, openRoots(), AgentOpen.startMenuDirs() );
+                if( r.target == null ) { reporter.say( r.error ); return; }
+                a2 = r.target.kind; b2 = r.target.path + "|" + r.target.label;
+                what = "open " + r.target.label;
+                break;
+            }
+            case "type":
+            {
+                if( !typeEnabled() ) { reporter.say( "Typing for you is off. Set AgentTypeEnabled=true in settings.properties and restart me." ); return; }
+                if( AgentTyper.sanitize( b ).isEmpty() ) { reporter.say( "What should I type?" ); return; }
+                what = "type into " + a;
+                break;
+            }
+            default: return;
+        }
+        final AgentScheduler.Task task = scheduler.add( at, kind, a2, b2 );
+        if( task == null ) { reporter.say( "My schedule is full." ); return; }
+        if( countdown != null && ( "sound".equals( kind ) || "remind".equals( kind ) ) && at - now <= 24L * 3600_000L )
+        {
+            counted.add( task.id );
+            countdown.accept( at, a.isEmpty() ? "Time's up!" : a );
+        }
+        reporter.say( "Okay, I'll " + what + " " + whenText( at, now ) + "." );
+    }
+
+    private List<Path> openRoots()
+    {
+        final List<Path> r = new ArrayList<>( allowedRoots() );
+        return r;
+    }
+
+    private List<Path> allowedRoots()
+    {
+        final List<Path> out = new ArrayList<>( AgentPolicy.allowedFolders( props, home ) );
+        for( final String d : new String[] { "Desktop", "Documents", "Downloads", "Pictures", "Videos", "Music" } )
+        {
+            final Path p = home.resolve( d );
+            if( !out.contains( p ) ) out.add( p );
+        }
+        return out;
+    }
+
+    /** Called by the scheduler thread when a task is due. */
+    void fire( final AgentScheduler.Task t, final boolean late )
+    {
+        if( !enabled() ) return;
+        final String lateNote = late ? " (a bit late - I was off)" : "";
+        switch( t.kind )
+        {
+            case "sound":
+                AgentSound.chime();
+                if( !counted.remove( t.id ) ) reporter.say( ( t.a.isEmpty() ? "Time's up!" : t.a ) + lateNote );
+                break;
+            case "remind":
+                AgentSound.chime();
+                if( !counted.remove( t.id ) ) reporter.say( "Reminder: " + t.a + lateNote );
+                break;
+            case "open":
+            {
+                final String[] pl = t.b.split( "\\|", 2 );
+                final String path = pl[ 0 ], label = pl.length > 1 ? pl[ 1 ] : path;
+                if( late ) { reporter.say( "I missed opening " + label + " at its time. Ask me again if you still want it." ); break; }
+                if( !AgentOpen.stillSafe( t.a, path, openRoots(), AgentOpen.startMenuDirs() ) ) { reporter.say( "I won't open " + label + " any more." ); break; }
+                reporter.say( AgentOpen.open( t.a, path ) ? "Opening " + label + "." : "I couldn't open " + label + "." );
+                break;
+            }
+            case "type":
+                fireType( t, late );
+                break;
+            default: break;
+        }
+    }
+
+    private void fireType( final AgentScheduler.Task t, final boolean late )
+    {
+        if( !typeEnabled() ) { reporter.say( "I skipped a scheduled message because typing is off." ); return; }
+        if( late ) { reporter.say( "I missed sending \"" + t.b + "\" to " + t.a + " at its time. Ask me again if you still want it." ); return; }
+        if( windows == null ) { reporter.say( "I can't reach windows to send that." ); return; }
+        final Match m = matchWindow( windows.list(), t.a );
+        if( m.match == null )
+        {
+            reporter.say( m.ambiguous != null && !m.ambiguous.isEmpty() ? "More than one window matches " + t.a + ", so I didn't type anything." : "I couldn't find " + t.a + " to send your message." );
+            return;
+        }
+        if( !windows.foreground( m.match ) ) { reporter.say( "I couldn't bring " + m.match.title + " to the front, so I didn't type." ); return; }
+        try { Thread.sleep( 600 ); } catch( final InterruptedException e ) { return; }
+        final String front = windows.foregroundTitle();
+        if( front == null || !front.equals( m.match.title ) ) { reporter.say( "A different window took focus, so I didn't type." ); return; }
+        reporter.say( AgentTyper.typeLine( t.b ) ? "Sent to " + shorten( m.match.title ) + "." : "That didn't go through." );
+    }
+
+    private void doCalendar( final String[] t ) throws Exception
+    {
+        final long at = Long.parseLong( t[ 1 ] );
+        final String title = t.length > 2 && !t[ 2 ].isEmpty() ? t[ 2 ] : "Event";
+        final long now = clock.getAsLong();
+        final Path dir = calendarDir != null ? calendarDir : Paths.get( "agent-calendar" );
+        final Path f = AgentCalendar.write( dir, title, at, 3600_000L, 10 );
+        if( scheduler != null && at > now ) scheduler.add( at - 10 * 60_000L > now ? at - 10 * 60_000L : at, "remind", title + " is " + ( at - 10 * 60_000L > now ? "in 10 minutes" : "now" ), "" );
+        final boolean opened = AgentOpen.open( "file", f.toAbsolutePath().toString() );
+        reporter.say( "Calendar event \"" + shorten( title ) + "\" for " + whenText( at, now ) + ( opened ? " - your calendar app should open it. I'll also remind you." : " saved as " + f.getFileName() + ". I'll also remind you." ) );
+    }
+
+    private void doAgenda()
+    {
+        final List<AgentScheduler.Task> all = scheduler == null ? new ArrayList<>() : scheduler.list();
+        if( all.isEmpty() ) { reporter.say( "Nothing scheduled." ); return; }
+        final long now = clock.getAsLong();
+        final StringBuilder sb = new StringBuilder( "Scheduled: " );
+        for( int i = 0; i < Math.min( 4, all.size() ); i++ )
+        {
+            final AgentScheduler.Task x = all.get( i );
+            if( i > 0 ) sb.append( "; " );
+            final String label = "open".equals( x.kind ) ? "open " + x.b.split( "\\|", 2 )[ x.b.contains( "|" ) ? 1 : 0 ] : "type".equals( x.kind ) ? "type into " + x.a : x.a.isEmpty() ? "sound" : x.a;
+            sb.append( shorten( label ) ).append( " " ).append( whenText( x.atMs, now ) );
+        }
+        if( all.size() > 4 ) sb.append( " (+" ).append( all.size() - 4 ).append( " more)" );
+        reporter.say( sb.toString() );
+    }
+
+    private void doUnschedule( final String what )
+    {
+        final int n = scheduler == null ? 0 : scheduler.cancel( what );
+        reporter.say( n == 0 ? "I don't have anything like that scheduled." : "Cancelled " + n + ( n == 1 ? " item." : " items." ) );
     }
 
     // window ------------------------------------------------------------------

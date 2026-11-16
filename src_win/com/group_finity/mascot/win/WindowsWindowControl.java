@@ -109,6 +109,31 @@ public final class WindowsWindowControl implements WindowControl
     }
 
     @Override
+    public boolean foreground( final Info w )
+    {
+        final User32 u = User32.INSTANCE;
+        final Pointer h = new Pointer( w.handle );
+        if( u.IsWindow( h ) == 0 ) return false;
+        if( u.IsIconic( h ) != 0 ) u.ShowWindow( h, SW_RESTORE );
+        u.BringWindowToTop( h );
+        u.SetForegroundWindow( h );
+        try { Thread.sleep( 150 ); } catch( final InterruptedException e ) { return false; }
+        final Pointer f = u.GetForegroundWindow();
+        return f != null && Pointer.nativeValue( f ) == w.handle;
+    }
+
+    @Override
+    public String foregroundTitle()
+    {
+        final User32 u = User32.INSTANCE;
+        final Pointer f = u.GetForegroundWindow();
+        if( f == null ) return null;
+        final char[] t = new char[ 256 ];
+        final int n = u.GetWindowTextW( f, t, t.length );
+        return n > 0 ? new String( t, 0, n ) : null;
+    }
+
+    @Override
     public boolean apply( final Info w, final Op op )
     {
         final User32 u = User32.INSTANCE;

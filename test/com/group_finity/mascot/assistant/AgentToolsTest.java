@@ -16,7 +16,7 @@ public class AgentToolsTest
         if( !java.util.Objects.equals( want, got ) ) { fails++; System.out.println( "FAIL " + n + ": want " + want + " got " + got ); }
     }
 
-    static final class FakeWin implements WindowControl
+    static class FakeWin implements WindowControl
     {
         final List<Info> wins = new ArrayList<>();
         final List<String> applied = new ArrayList<>();
@@ -410,6 +410,109 @@ public class AgentToolsTest
         eq( "half at 2s", 0.5f, AgentConfirmBubble.opacityFor( 2000 ) );
         eq( "never fully invisible", 0.15f, AgentConfirmBubble.opacityFor( 10 ) );
         eq( "headless asks deny", false, AgentConfirmBubble.ask( "t", "m", () -> new Rectangle( 0, 0, 10, 10 ), 100 ) );
+
+
+        // ---- scheduling ----
+        final java.time.ZoneId zid = java.time.ZoneId.systemDefault();
+        final long now0 = java.time.ZonedDateTime.of( 2026, 11, 16, 18, 0, 0, 0, zid ).toInstant().toEpochMilli();
+        List<String[]> si = AgentIntent.parse( "play a sound in 20 minutes", now0, zid );
+        eq( "sound tool", "schedule", si.get( 0 )[ 0 ] );
+        eq( "sound at", Long.toString( now0 + 20 * 60_000L ), si.get( 0 )[ 1 ] );
+        eq( "sound kind", "sound", si.get( 0 )[ 2 ] );
+        si = AgentIntent.parse( "can you ask claude to continue at 8:40pm", now0, zid );
+        eq( "type kind", "type", si.get( 0 )[ 2 ] );
+        eq( "type target", "claude", si.get( 0 )[ 3 ] );
+        eq( "type text", "continue", si.get( 0 )[ 4 ] );
+        eq( "type time", java.time.ZonedDateTime.of( 2026, 11, 16, 20, 40, 0, 0, zid ).toInstant().toEpochMilli() + "", si.get( 0 )[ 1 ] );
+        si = AgentIntent.parse( "remind me to stretch in half an hour", now0, zid );
+        eq( "remind", "remind", si.get( 0 )[ 2 ] );
+        eq( "remind text", "stretch", si.get( 0 )[ 3 ] );
+        si = AgentIntent.parse( "open youtube.com tomorrow at 9am", now0, zid );
+        eq( "open kind", "open", si.get( 0 )[ 2 ] );
+        eq( "open arg", "youtube.com", si.get( 0 )[ 3 ] );
+        si = AgentIntent.parse( "add a meeting with Sam on Friday at 3pm to my calendar", now0, zid );
+        eq( "calendar tool", "calendar", si.get( 0 )[ 0 ] );
+        eq( "agenda", "agenda", AgentIntent.parse( "what's scheduled", now0, zid ).get( 0 )[ 0 ] );
+        eq( "cancel all", "all", AgentIntent.parse( "cancel all my reminders", now0, zid ).get( 0 )[ 1 ] );
+        eq( "cancel last", "last", AgentIntent.parse( "cancel that", now0, zid ).get( 0 )[ 1 ] );
+        eq( "plain chat unaffected", 0, AgentIntent.parse( "I'll see you at 5 haha", now0, zid ).size() );
+
+        final Path sh = Files.createTempDirectory( "sched" );
+        final AgentScheduler sch = new AgentScheduler( sh.resolve( "s.tsv" ) );
+        final AgentScheduler.Task t1 = sch.add( 1000, "sound", "ding", "" );
+        sch.add( 2000, "remind", "tea", "" );
+        sch.add( 9_000_000, "remind", "later", "" );
+        eq( "persisted", 3, new AgentScheduler( sh.resolve( "s.tsv" ) ).list().size() );
+        final List<String> fired = new ArrayList<>();
+        eq( "fireDue count", 2, sch.fireDue( 3000, ( x, late ) -> fired.add( x.a + ( late ? "!" : "" ) ) ) );
+        eq( "fired order", List.of( "ding", "tea" ), fired );
+        eq( "not refired", 0, sch.fireDue( 3000, ( x, late ) -> fired.add( "again" ) ) );
+        eq( "late flag", true, sch.fireDue( 9_000_000 + AgentScheduler.LATE_MS + 1, ( x, late ) -> fired.add( late ? "LATE" : "ok" ) ) == 1 && fired.contains( "LATE" ) );
+        sch.add( 5, "remind", "buy milk", "" ); sch.add( 6, "remind", "call mom", "" );
+        eq( "cancel by text", 1, sch.cancel( "milk" ) );
+        eq( "cancel all", 1, sch.cancel( "all" ) );
+
+        // tool flow with a fake clock + captured reporter
+        final Properties sp = new Properties();
+        sp.setProperty( "AgentEnabled", "true" );
+        final List<String> ssaid = new ArrayList<>();
+        final List<String> cds = new ArrayList<>();
+        final AgentScheduler sch2 = new AgentScheduler( sh.resolve( "s2.tsv" ) );
+        final FakeWin tw = new FakeWin() { public String foregroundTitle() { return "Claude"; } };
+        tw.wins.add( w( "Claude" ) );
+        final AgentTools st = new AgentTools( sp, tw, ( x, y ) -> true, ssaid::add, sh.resolve( "j.tsv" ), sh )
+            .withScheduler( sch2, sh.resolve( "cal" ), ( end, label ) -> cds.add( label ) ).withClock( () -> now0 );
+        st.run( new String[] { "schedule", Long.toString( now0 + 60_000 ), "sound", "tea is ready", "" } );
+        eq( "task added", 1, sch2.list().size() );
+        eq( "countdown shown", List.of( "tea is ready" ), cds );
+        eq( "confirmation says when", true, ssaid.get( 0 ).contains( "tea is ready" ) );
+        st.run( new String[] { "schedule", Long.toString( now0 - 5 ), "sound", "", "" } );
+        eq( "past refused", true, ssaid.get( 1 ).contains( "passed" ) );
+        st.run( new String[] { "schedule", Long.toString( now0 + 60_000 ), "type", "claude", "continue" } );
+        eq( "typing off by default", 1, sch2.list().size() );
+        eq( "typing off says how", true, ssaid.get( 2 ).contains( "AgentTypeEnabled" ) );
+        st.run( new String[] { "agenda" } );
+        eq( "agenda lists", true, ssaid.get( 3 ).startsWith( "Scheduled:" ) );
+        st.run( new String[] { "unschedule", "all" } );
+        eq( "unscheduled", 0, sch2.list().size() );
+        // the model cannot schedule or type
+        st.handleNow( "[DO:schedule|" + ( now0 + 1000 ) + "|type|claude|rm everything]" );
+        eq( "model tag ignored", 0, sch2.list().size() );
+        // firing: late type is skipped, typing-off type is skipped, nothing typed
+        final int before = ssaid.size();
+        st.fire( new AgentScheduler.Task( 99, now0, "type", "claude", "continue", now0 ), false );
+        eq( "type off at fire", true, ssaid.get( before ).contains( "typing is off" ) );
+        st.fire( new AgentScheduler.Task( 100, now0, "open", "file", "C:/nowhere/x.txt|x.txt", now0 ), true );
+        eq( "late open skipped", true, ssaid.get( ssaid.size() - 1 ).contains( "missed" ) );
+        // timer tag dropped when we schedule
+        eq( "timer stripped", "ok ", st.withoutTimerIfScheduled( "remind me to stretch in 10 minutes", "ok [TIMER:10:stretch]" ) );
+        eq( "timer kept otherwise", "ok [TIMER:10:x]", st.withoutTimerIfScheduled( "hello", "ok [TIMER:10:x]" ) );
+
+        // open resolution
+        final Path od = Files.createTempDirectory( "open" );
+        Files.write( od.resolve( "report.pdf" ), new byte[] { 1 } );
+        Files.write( od.resolve( "tool.exe" ), new byte[] { 1 } );
+        final Path menu = Files.createDirectories( od.resolve( "menu" ) );
+        Files.write( menu.resolve( "Spotify.lnk" ), new byte[] { 1 } );
+        eq( "url", "url", AgentOpen.resolve( "youtube.com", List.of( od ), List.of( menu ) ).target.kind );
+        eq( "file by name", "file", AgentOpen.resolve( "report.pdf", List.of( od ), List.of( menu ) ).target.kind );
+        eq( "exe refused", null, AgentOpen.resolve( "tool.exe", List.of( od ), List.of( menu ) ).target );
+        eq( "path refused", null, AgentOpen.resolve( "C:\\Windows\\system32\\cmd.exe", List.of( od ), List.of( menu ) ).target );
+        eq( "app by start menu", "app", AgentOpen.resolve( "spotify", List.of( od ), List.of( menu ) ).target.kind );
+        eq( "javascript url refused", null, AgentOpen.resolve( "javascript:alert(1)", List.of( od ), List.of( menu ) ).target );
+        eq( "stillSafe file", true, AgentOpen.stillSafe( "file", od.resolve( "report.pdf" ).toString(), List.of( od ), List.of( menu ) ) );
+        eq( "stillSafe rejects exe", false, AgentOpen.stillSafe( "file", od.resolve( "tool.exe" ).toString(), List.of( od ), List.of( menu ) ) );
+        eq( "stillSafe rejects outside", false, AgentOpen.stillSafe( "file", "C:/Windows/notepad.exe", List.of( od ), List.of( menu ) ) );
+
+        // calendar + sound + typer
+        final String ics = AgentCalendar.ics( "Lunch; with, Sam", now0, 3600_000L, 10, now0 );
+        eq( "ics begin", true, ics.startsWith( "BEGIN:VCALENDAR" ) );
+        eq( "ics escaped", true, ics.contains( "SUMMARY:Lunch\\; with\\, Sam" ) );
+        eq( "ics alarm", true, ics.contains( "BEGIN:VALARM" ) );
+        eq( "chime has samples", true, AgentSound.chimeSamples( 3 ).length > 40000 );
+        eq( "typer one line", "a b", AgentTyper.sanitize( "a\nb" ) );
+        eq( "typer cap", AgentTyper.MAX_CHARS, AgentTyper.sanitize( "x".repeat( 900 ) ).length() );
+        eq( "typer headless false", false, AgentTyper.typeLine( "hi" ) );
 
         System.out.println( fails == 0 ? "AgentToolsTest: all passed" : "AgentToolsTest: " + fails + " FAILED" );
         if( fails > 0 ) System.exit( 1 );

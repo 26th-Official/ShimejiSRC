@@ -565,6 +565,7 @@ public class Mascot implements com.group_finity.mascot.assistant.AssistantHost
 
         // Agent: repair a file left parked by an interrupted visible move (once per run).
         if( assistantMode && Main.getInstance( ) != null ) com.group_finity.mascot.assistant.AgentTools.startup( Main.getInstance( ).getProperties( ) );
+        if( assistantMode && Main.getInstance( ) != null ) com.group_finity.mascot.assistant.AgentTools.forHost( this ).bindScheduler( );
 
         // Mascots flagged for it get a live console/log readout projected ahead of
         // them (2B by default; opt-in for any via <ConsoleReadout>true</ConsoleReadout>).
