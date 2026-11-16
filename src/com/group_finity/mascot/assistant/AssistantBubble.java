@@ -170,6 +170,9 @@ public class AssistantBubble
 
     private Rectangle lastBounds  = null;
     private boolean   bubbleAbove = true;  // tail points down when true
+    /** 0 = mascot on the floor, 1 = high up the screen (smoothed). Drives how steeply the tail leans. */
+    private volatile float smoothTailHeight = -1f;
+    private static final float TAIL_FULL_HEIGHT_FRAC = 0.6f;   // this far up the screen the tail points straight down
     private int       lastMascotCX = Integer.MIN_VALUE;   // mascot center X for tail tracking; MIN_VALUE = unset
     private int       lastMascotCY = Integer.MIN_VALUE;   // mascot center Y for proximity checks
     // Cached from layout() so paintComponent() never recomputes line counts mid-frame
@@ -344,8 +347,12 @@ public class AssistantBubble
                     : w / 2;
                 final float blend = Math.max( -1f, Math.min( 1f,
                     ( rawTailX - w / 2f ) / tailW ) );
-                final int tailX = Math.max( r + tailW, Math.min( w - r - tailW,
+                final int tailX0 = Math.max( r + tailW, Math.min( w - r - tailW,
                     rawTailX - Math.round( blend * 16 ) ) );
+                final float gain  = tailLeanGain( smoothTailHeight < 0f ? 0.5f : smoothTailHeight );
+                final float blendG = Math.max( -2f, Math.min( 2f, blend * gain ) );
+                final int tailX = Math.max( r + tailW, Math.min( w - r - tailW,
+                    tailBaseFor( tailX0 + Math.round( blend * ( tailW / 2f ) ), blendG, tailW ) ) );
 
                 if( !multiBubble )
                 {
@@ -357,7 +364,7 @@ public class AssistantBubble
                     final int h = bubbleContentH;
 
                     final java.awt.geom.Path2D.Float bubblePath = buildBubblePath(
-                        w, h, r, tailX, tailW, tailH, bubbleAbove, blend );
+                        w, h, r, tailX, tailW, tailH, bubbleAbove, blendG );
 
                     // Use explicit composite extraAlpha (not baked-in Color alpha) —
                     // same pattern as text shadow rendering which works on all monitors.
@@ -407,10 +414,14 @@ public class AssistantBubble
 
                         final float blendMulti = Math.max( -1f, Math.min( 1f,
                             ( rawLocalTailX - bW / 2f ) / tailW ) );
-                        final int localTailX = Math.max( r + tailW, Math.min( bW - r - tailW,
+                        final int localTailX0 = Math.max( r + tailW, Math.min( bW - r - tailW,
                             rawLocalTailX - Math.round( blendMulti * 16 ) ) );
+                        final float blendMultiG = Math.max( -2f, Math.min( 2f,
+                            blendMulti * tailLeanGain( smoothTailHeight < 0f ? 0.5f : smoothTailHeight ) ) );
+                        final int localTailX = Math.max( r + tailW, Math.min( bW - r - tailW,
+                            tailBaseFor( localTailX0 + Math.round( blendMulti * ( tailW / 2f ) ), blendMultiG, tailW ) ) );
                         final java.awt.geom.Path2D.Float path = hasTail
-                            ? buildBubblePath( bW, bH, r, localTailX, tailW, tailH, tailBelow, blendMulti )
+                            ? buildBubblePath( bW, bH, r, localTailX, tailW, tailH, tailBelow, blendMultiG )
                             : buildRoundedRectPath( bW, bH, r );
 
                         final float alpha     = msg.alpha;
@@ -1014,6 +1025,19 @@ public class AssistantBubble
         panel.repaint();
     }
 
+    /** How much the tail leans toward the mascot: about 2x at the floor, normal at mid height, none (straight down) when high up. */
+    static float tailLeanGain( final float heightFrac )
+    {
+        final float h = Math.max( 0f, Math.min( 1f, heightFrac ) );
+        return Math.max( 0f, 2f - 2f * h );
+    }
+
+    /** Where the tail base goes so the tip stays at {@code tip} while the lean is scaled by {@code blendG}. */
+    static int tailBaseFor( final int tip, final float blendG, final int tailW )
+    {
+        return tip - Math.round( blendG * ( tailW / 2f ) );
+    }
+
     /**
      * Build a seamless Path2D combining rounded rect + tail as one shape.
      * No seams, works correctly at any opacity.
@@ -1531,6 +1555,10 @@ public class AssistantBubble
         final int mascotCY      = mascotBounds.y + mascotBounds.height / 2;
         lastMascotCX            = mascotCX;
         lastMascotCY            = mascotCY;
+        final float feetUp = ( screen.y + screen.height - ( mascotBounds.y + mascotBounds.height ) )
+            / (float) Math.max( 1, screen.height );
+        final float hf = Math.max( 0f, Math.min( 1f, feetUp / TAIL_FULL_HEIGHT_FRAC ) );
+        smoothTailHeight = smoothTailHeight < 0f ? hf : smoothTailHeight + ( hf - smoothTailHeight ) * 0.15f;
         // Horizontal placement: offset IN FRONT of the mascot's anchor by BubbleOffset x its (smoothed)
         // height. Falls back to the old centre-on-bounds when no anchor has been supplied.
         final int bubbleCX;
