@@ -8,6 +8,9 @@ __pycache__/
 *.pyc
 Build.local.bat
 
+# Local AI API credentials — never commit real keys
+conf/api.properties
+
 # Per-user assistant data: plain text on purpose (users can read and edit it), never committed
 relationship_journal.txt
 memory.json

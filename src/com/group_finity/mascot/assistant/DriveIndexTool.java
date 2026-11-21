@@ -961,7 +961,9 @@ public class DriveIndexTool
 
     private static String semanticModel()
     {
-        return getProperty( "DriveSemanticModel", DEFAULT_SEMANTIC_MODEL ).trim();
+        // Provider-aware: local nomic-embed-text by default, or the configured
+        // OpenAI-compatible embedding model when AiProvider=openai.
+        return AiSettings.embeddingModel( );
     }
 
     private static double semanticThreshold()
@@ -1061,7 +1063,10 @@ public class DriveIndexTool
             if( vecs == null )
             {
                 log.info( "[DriveSemantic] Embedding unavailable (model=" + model
-                    + "); keyword retrieval only. Pull it with: ollama pull " + model );
+                    + "); keyword retrieval only. "
+                    + ( "openai".equals( AiSettings.provider( ) )
+                        ? "Check AiEmbeddingModel / AiApiKey."
+                        : "Pull it with: ollama pull " + model ) );
                 break;
             }
             for( int j = 0; j < batch.size() && j < vecs.length; j++ )

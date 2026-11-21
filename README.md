@@ -1,8 +1,8 @@
 # Shimeji AI — Environment-Aware Desktop Mascots
 
-A heavily modified fork of [Shimeji-ee](https://kilkakon.com/shimeji/) (an English edition of Group Finity's original Shimeji) — Java desktop mascots for Windows — with a fully local AI assistant layer added on top. You get the complete classic Shimeji experience *and* mascots that perceive your environment and react in character: what's on screen, what's playing through the speakers, what you say (to them or near them), system load, the weather, even the contents of local drives.
+A heavily modified fork of [Shimeji-ee](https://kilkakon.com/shimeji/) (an English edition of Group Finity's original Shimeji) — Java desktop mascots for Windows — with an AI assistant layer added on top (local by default). You get the complete classic Shimeji experience *and* mascots that perceive your environment and react in character: what's on screen, what's playing through the speakers, what you say (to them or near them), system load, the weather, even the contents of local drives.
 
-**Your data stays local.** No subscriptions, no accounts, no telemetry — LLM inference runs through [Ollama](https://ollama.com) and speech-to-text through [faster-whisper](https://github.com/SYSTRAN/faster-whisper) on CPU, and nothing about your screen, voice, files, or chats leaves the machine. The one exception is the weather lookup: when you ask a mascot about the weather, it contacts `api.open-meteo.com` — and with the default `WeatherLocation=auto`, also `ip-api.com` (falling back to `ipapi.co`), which sees your public IP to guess your city. Set `WeatherLocation` to a city name to skip the IP lookup, or `WeatherEnabled=false` to turn weather off entirely.
+**Local by default.** No subscriptions, no accounts, no telemetry — out of the box, LLM inference runs through [Ollama](https://ollama.com) and speech-to-text through [faster-whisper](https://github.com/SYSTRAN/faster-whisper) on CPU, and nothing about your screen, voice, files, or chats leaves the machine. You can optionally point the assistant at any **OpenAI-compatible API** (OpenAI, OpenRouter, Groq, Together, LM Studio, llama.cpp, vLLM) with a base URL and key; in that mode the prompts, screen glances, and conversation excerpts you trigger are sent to that provider. The weather lookup is the other network call: when you ask a mascot about the weather, it contacts `api.open-meteo.com` — and with the default `WeatherLocation=auto`, also `ip-api.com` (falling back to `ipapi.co`), which sees your public IP to guess your city. Set `WeatherLocation` to a city name to skip the IP lookup, or `WeatherEnabled=false` to turn weather off entirely.
 
 **▶ [Download from the releases page](https://github.com/kobitz/ShimejiSRC/releases)** — grab `Shimeji-Install-Windows.zip`, extract anywhere, run `Setup.bat` once (installs Ollama + the local models), then launch `Shimeji.exe` (or `Admin.bat` for fan control and CPU-temperature features).
 
@@ -134,8 +134,9 @@ Hornet (Hollow Knight), Holo (Spice and Wolf), Paimon (Genshin Impact), 2B (NieR
 
 - Windows 10/11 (the AI layer is Windows-only: WASAPI loopback, JNA Win32)
 - Java 17+ (a JRE is bundled in release builds)
-- [Ollama](https://ollama.com) with a small instruct model (tuned for ~4B class, e.g. `gemma4:e2b-it-qat`, which doubles as the multimodal model for vision); `nomic-embed-text` (CPU-only, ~280 MB) powers semantic drive recall and is optional — keyword retrieval continues without it
-- Python with `faster-whisper` for voice/audio features (`whisper_server.py` runs beside the JAR)
+- **Local mode (default):** [Ollama](https://ollama.com) with a small instruct model (tuned for ~4B class, e.g. `gemma4:e2b-it-qat`, which doubles as the multimodal model for vision); `nomic-embed-text` (CPU-only, ~280 MB) powers semantic drive recall and is optional — keyword retrieval continues without it
+- **API mode (optional):** any OpenAI-compatible endpoint (OpenAI, OpenRouter, Groq, Together, LM Studio, llama.cpp, vLLM) plus a base URL and API key. No Ollama install is needed in this mode, though remote calls are billed by the provider
+- Python with `faster-whisper` for voice/audio features (`whisper_server.py` runs beside the JAR — transcription stays local in both modes)
 - NVIDIA GPU optional — GPU telemetry uses `nvidia-smi`; everything degrades gracefully without it
 
 A 6 GB VRAM / 16 GB RAM laptop is the reference hardware; the engine is tuned to stay out of the way (process priority separation, request spacing, short model keep-alive, and CPU-load-gated reactions that defer while you're busy) so inference never makes the desktop stutter or overheat.
@@ -150,6 +151,23 @@ Plain `ant jar` produces the fat JAR if you don't need the exe wrapper.
 ## Configuration
 
 XML-driven behaviors (`conf/actions.xml`, `conf/behaviors.xml`, per-mascot overrides in `img/<name>/conf/`) with Nashorn JS expressions for conditions and velocities. Assistant settings (models, bubble styling, voice polling, drive indexing, resource caps) live in `conf/settings.properties` and the in-app settings UI.
+
+### Using a cloud / OpenAI-compatible API
+
+Open **Settings → Chat Bubbles**, set **AI Provider** to *OpenAI-compatible API*, enter the base URL and key, click **Load models**, then choose the text, vision, and (optionally) embedding models. Any server that implements `POST /chat/completions` and `GET /models` works.
+
+| Provider | Base URL |
+|---|---|
+| OpenAI | `https://api.openai.com/v1` |
+| OpenRouter | `https://openrouter.ai/api/v1` |
+| Groq | `https://api.groq.com/openai/v1` |
+| Together | `https://api.together.xyz/v1` |
+| LM Studio | `http://localhost:1234/v1` |
+| llama.cpp server | `http://localhost:8080/v1` |
+
+The key is written to `conf/api.properties` (gitignored), not `conf/settings.properties`. For a key that never touches disk, set the `SHIMEJI_AI_API_KEY` environment variable instead — it takes precedence. Equivalent `settings.properties` keys: `AiProvider`, `AiBaseUrl`, `AiTextModel`, `AiVisionModel`, `AiEmbeddingModel`, `AiApiKey` (legacy; prefer `api.properties`).
+
+Remote calls skip the local CPU-load deferral and use a 1-second dispatch floor, since they don't compete with the mascot tick loop. Speech-to-text, file/window tools, sensors, and fan control remain local.
 
 ## Lineage & license
 
